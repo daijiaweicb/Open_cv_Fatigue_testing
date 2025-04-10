@@ -1,110 +1,44 @@
-cmake_minimum_required(VERSION 3.16)
-project(FatigueDetection LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.10)
 
-# 设置编译选项
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+project(FatigueDetection)
 
-# 默认Release构建类型
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
-endif()
+# 设置C++标准
+set(CMAKE_CXX_STANDARD 14)
 
-# 查找OpenCV组件
-find_package(OpenCV REQUIRED COMPONENTS
-    core
-    imgproc
-    highgui
-)
-
-# 查找dlib
+# 找到 OpenCV 和 dlib 库
+find_package(OpenCV REQUIRED)
 find_package(dlib REQUIRED)
 
-# 高级查找libcamera
-find_package(PkgConfig QUIET)
-if(PKG_CONFIG_FOUND)
-    pkg_check_modules(LIBCAMERA QUIET libcamera)
-endif()
+# 设置 libcamera 的路径
+# 如果 libcamera 库没有安装到系统默认路径，使用以下语句设置路径
+# set(LIBCAMERA_INCLUDE_DIR "/path/to/libcamera/include")
+# set(LIBCAMERA_LIB_DIR "/path/to/libcamera/lib")
 
-if(NOT LIBCAMERA_FOUND)
-    message(STATUS "正在执行手动libcamera查找...")
-    
-    # 搜索库文件路径
-    find_library(LIBCAMERA_LIBRARY
-        NAMES libcamera.so camera
-        PATHS /usr/lib
-              /usr/lib/aarch64-linux-gnu
-              /usr/lib/arm-linux-gnueabihf
-              /usr/local/lib
-    )
-    
-    # 搜索头文件路径
-    find_path(LIBCAMERA_INCLUDE_DIR
-        NAMES libcamera/libcamera.h
-        PATHS /usr/include
-              /usr/local/include
-    )
-    
-    if(LIBCAMERA_LIBRARY AND LIBCAMERA_INCLUDE_DIR)
-        set(LIBCAMERA_LIBRARIES ${LIBCAMERA_LIBRARY})
-        set(LIBCAMERA_INCLUDE_DIRS ${LIBCAMERA_INCLUDE_DIR})
-        set(LIBCAMERA_FOUND TRUE)
-        message(STATUS "找到libcamera库: ${LIBCAMERA_LIBRARIES}")
-        message(STATUS "找到libcamera头文件: ${LIBCAMERA_INCLUDE_DIRS}")
-    else()
-        message(FATAL_ERROR "libcamera未找到！\n"
-                "请确认：\n"
-                "1. 已安装libcamera-dev: sudo apt install libcamera-dev\n"
-                "2. 库文件位于标准路径")
-    endif()
-endif()
+# 包含目录
+include_directories(
+    ${OpenCV_INCLUDE_DIRS}
+    ${dlib_INCLUDE_DIRS}
+    ${LIBCAMERA_INCLUDE_DIR}
+)
 
-# 配置可执行文件
-add_executable(fatigue_detect
+# 设置源文件
+set(SOURCES
     src/main.cpp
 )
 
-# 包含目录
-target_include_directories(fatigue_detect PRIVATE
-    ${OpenCV_INCLUDE_DIRS}
-    ${dlib_INCLUDE_DIRS}
-    ${LIBCAMERA_INCLUDE_DIRS}
-)
+# 添加可执行文件
+add_executable(fatigue_detect ${SOURCES})
 
-# 链接库（注意顺序）
-target_link_libraries(fatigue_detect PRIVATE
-    ${LIBCAMERA_LIBRARIES}  # 必须首先链接
+# 链接 OpenCV、dlib 和 libcamera 库
+target_link_libraries(fatigue_detect
+    ${OpenCV_LIBS}
     dlib::dlib
-    ${OpenCV_LIBRARIES}
-    pthread
-    stdc++fs
+    ${LIBCAMERA_LIB_DIR}/libcamera.so
 )
 
-# 编译器优化
+# 设置调试和发布配置
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_options(fatigue_detect PRIVATE
-        -O3
-        -Wall
-        -Wextra
-    )
-    
-    # ARM平台NEON优化
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64")
-        target_compile_options(fatigue_detect PRIVATE
-            -mcpu=native
-            -mfpu=neon
-        )
-        message(STATUS "启用ARM NEON优化")
-    endif()
+    target_compile_options(fatigue_detect PRIVATE -O3 -DNDEBUG)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(fatigue_detect PRIVATE -g)
 endif()
-
-# 安装规则（可选）
-install(TARGETS fatigue_detect DESTINATION bin)
-install(FILES models/shape_predictor_68_face_landmarks.dat
-        DESTINATION share/fatigue_detect)
-
-# 调试信息
-message(STATUS "构建类型: ${CMAKE_BUILD_TYPE}")
-message(STATUS "OpenCV版本: ${OpenCV_VERSION}")
-message(STATUS "dlib版本: ${dlib_VERSION}")
