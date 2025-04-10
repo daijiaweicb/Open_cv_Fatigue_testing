@@ -3,143 +3,185 @@
 #include <dlib/image_processing/frontal_face_detector.h>
 #include <dlib/image_processing.h>
 #include <libcamera/libcamera.h>
+#include <sys/mman.h>
 #include <iostream>
 #include <vector>
 #include <chrono>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
-// EAR 计算函数
-double computeEAR(const std::vector<cv::Point>& eye) {
-    double A = cv::norm(eye[1] - eye[5]);
-    double B = cv::norm(eye[2] - eye[4]);
-    double C = cv::norm(eye[0] - eye[3]);
-    return (A + B) / (2.0 * C);
-}
+// 参数配置
+constexpr double EAR_THRESHOLD = 0.21;   // 可配置化
+constexpr int EAR_CONSEC_FRAMES = 15;    // 连续帧阈值
+constexpr int DETECTION_INTERVAL = 3;    // 检测间隔帧数
+constexpr int RESIZE_SCALE = 0.5;        // 图像缩小比例
 
-// 提取眼睛关键点
-std::vector<cv::Point> getEyePoints(const dlib::full_object_detection& shape, bool left) {
-    std::vector<cv::Point> points;
-    int start = left ? 36 : 42;
-    for (int i = 0; i < 6; ++i) {
-        auto pt = shape.part(start + i);
-        points.emplace_back(cv::Point(pt.x(), pt.y()));
+// 资源管理RAII类
+class CameraRAII {
+public:
+    CameraRAII(libcamera::CameraManager& cm) : cm_(cm) { cm_.start(); }
+    ~CameraRAII() { cm_.stop(); }
+private:
+    libcamera::CameraManager& cm_;
+};
+
+// 疲劳检测器类
+class FatigueDetector {
+public:
+    FatigueDetector(const std::string& modelPath) {
+        try {
+            dlib::deserialize(modelPath) >> predictor_;
+        } catch (dlib::serialization_error& e) {
+            throw std::runtime_error("模型加载失败: " + std::string(e.what()));
+        }
+        detector_ = dlib::get_frontal_face_detector();
     }
-    return points;
-}
+
+    double computeEAR(const std::vector<cv::Point>& eye) {
+        double A = cv::norm(eye[1] - eye[5]);
+        double B = cv::norm(eye[2] - eye[4]);
+        double C = cv::norm(eye[0] - eye[3]);
+        return (A + B) / (2.0 * C);
+    }
+
+    bool detect(const cv::Mat& frame) {
+        cv::Mat smallFrame;
+        cv::resize(frame, smallFrame, cv::Size(), RESIZE_SCALE, RESIZE_SCALE);
+        
+        dlib::cv_image<dlib::bgr_pixel> dlibImg(smallFrame);
+        auto faces = detector_(dlibImg);
+        
+        if (faces.empty()) return false;
+
+        auto& face = faces[0]; // 只处理第一张人脸
+        auto shape = predictor_(dlibImg, face);
+
+        auto leftEye = getEyePoints(shape, true);
+        auto rightEye = getEyePoints(shape, false);
+
+        double ear = (computeEAR(leftEye) + computeEAR(rightEye)) / 2.0;
+        return ear < EAR_THRESHOLD;
+    }
+
+private:
+    std::vector<cv::Point> getEyePoints(const dlib::full_object_detection& shape, bool left) {
+        std::vector<cv::Point> points;
+        int start = left ? 36 : 42;
+        for (int i = 0; i < 6; ++i) {
+            auto pt = shape.part(start + i);
+            points.emplace_back(pt.x() / RESIZE_SCALE, pt.y() / RESIZE_SCALE);
+        }
+        return points;
+    }
+
+    dlib::frontal_face_detector detector_;
+    dlib::shape_predictor predictor_;
+};
 
 int main() {
-    // 初始化 Dlib 检测器和模型
-    dlib::frontal_face_detector detector = dlib::get_frontal_face_detector();
-    dlib::shape_predictor predictor;
-    dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
-
-    // 使用 libcamera 获取摄像头帧
-    libcamera::CameraManager cameraManager;
-    cameraManager.start();
-    auto cameras = cameraManager.cameras();
-
-    if (cameras.empty()) {
-        std::cerr << "没有可用的摄像头!" << std::endl;
-        return -1;
-    }
-
-    auto camera = cameras.front(); // 使用第一个摄像头
-
-    // 获取 CameraConfiguration 对象
-    std::shared_ptr<libcamera::CameraConfiguration> config = camera->generateConfiguration({ libcamera::StreamRole::VideoRecording });
-
-    if (!config) {
-        std::cerr << "配置获取失败!" << std::endl;
-        return -1;
-    }
-
-    // 设置缓冲区数量
-    config->at(0).bufferCount = 4;
-
-    if (camera->configure(config.get()) < 0) {
-        std::cerr << "摄像头配置失败!" << std::endl;
-        return -1;
-    }
-
-    if (camera->start() < 0) {
-        std::cerr << "摄像头启动失败!" << std::endl;
-        return -1;
-    }
-
-    const double EAR_THRESHOLD = 0.21;
-    const int EAR_CONSEC_FRAMES = 15;
-    int frame_counter = 0;
-    bool fatigued = false;
-
-    while (true) {
-        // 创建请求并捕获帧
-        std::unique_ptr<libcamera::Request> request = camera->createRequest();
-        if (!request) {
-            std::cerr << "创建请求失败!" << std::endl;
-            break;
+    try {
+        // 初始化摄像头
+        libcamera::CameraManager cm;
+        CameraRAII cameraManagerRAII(cm); // RAII管理
+        
+        auto cameras = cm.cameras();
+        if (cameras.empty()) throw std::runtime_error("没有可用摄像头");
+        
+        auto camera = cameras.front();
+        auto config = camera->generateConfiguration({libcamera::StreamRole::VideoRecording});
+        if (!config || config->validate() != libcamera::CameraConfiguration::Valid) {
+            throw std::runtime_error("摄像头配置失败");
         }
 
-        camera->queueRequest(request.get()); // 传递指针
-
-        // 获取帧缓冲区
-        const libcamera::FrameBuffer* frameBuffer = request->buffers()[0].get();
-        if (frameBuffer == nullptr) {
-            std::cerr << "捕获帧失败!" << std::endl;
-            break;
+        config->at(0).size = {640, 480};  // 设置分辨率
+        config->at(0).bufferCount = 4;
+        if (camera->configure(config.get()) < 0) {
+            throw std::runtime_error("配置应用失败");
         }
 
-        // 获取帧缓冲区的第一个 plane
-        const libcamera::FrameBuffer::Plane& plane = frameBuffer->planes()[0];
+        // 映射内存
+        std::vector<void*> mappedBuffers;
+        for (const auto& buffer : config->at(0).buffers) {
+            const auto& plane = buffer->planes()[0];
+            void* data = mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+            if (data == MAP_FAILED) throw std::runtime_error("内存映射失败");
+            mappedBuffers.push_back(data);
+        }
 
-        // 获取图像数据（假设数据已经映射到内存中）
-        uint8_t* data = plane.mappedData();
-        size_t width = plane.stride();
-        size_t height = plane.height();
+        // 创建请求池
+        std::vector<std::unique_ptr<libcamera::Request>> requests;
+        for (unsigned int i = 0; i < config->at(0).bufferCount; ++i) {
+            auto req = camera->createRequest();
+            if (!req) throw std::runtime_error("创建请求失败");
+            
+            if (req->addBuffer(config->at(0).stream(), config->at(0).buffers[i].get()) < 0) {
+                throw std::runtime_error("添加缓冲区失败");
+            }
+            requests.push_back(std::move(req));
+        }
 
-        // 将数据传递给 OpenCV
-        cv::Mat frame(height, width, CV_8UC3, data);
+        if (camera->start() < 0) throw std::runtime_error("摄像头启动失败");
 
-        // 转换为 Dlib 图像
-        dlib::cv_image<dlib::bgr_pixel> dlib_img(frame);
-        std::vector<dlib::rectangle> faces = detector(dlib_img);
+        // 初始化检测器
+        FatigueDetector detector("shape_predictor_68_face_landmarks.dat");
+        
+        // 状态变量
+        int frameCounter = 0;
+        bool fatigued = false;
+        int frameCount = 0;
+        cv::Mat displayFrame;
 
-        for (auto face : faces) {
-            auto shape = predictor(dlib_img, face);
+        // 主循环
+        for (auto& req : requests) camera->queueRequest(req.get());
+        
+        while (true) {
+            auto req = camera->waitForCompletedRequest();
+            auto* buffer = req->buffers()[config->at(0).stream()];
+            const auto& plane = buffer->planes()[0];
+            
+            // YUV420转BGR
+            cv::Mat yuv(480 * 3/2, 640, CV_8UC1, mappedBuffers[buffer->index()]);
+            cv::cvtColor(yuv, displayFrame, cv::COLOR_YUV2BGR_I420);
+            
+            // 每DETECTION_INTERVAL帧检测一次
+            bool currentState = false;
+            if (++frameCount % DETECTION_INTERVAL == 0) {
+                currentState = detector.detect(displayFrame);
+            }
 
-            auto leftEye = getEyePoints(shape, true);
-            auto rightEye = getEyePoints(shape, false);
-
-            double leftEAR = computeEAR(leftEye);
-            double rightEAR = computeEAR(rightEye);
-            double ear = (leftEAR + rightEAR) / 2.0;
-
-            // 可视化眼睛轮廓
-            for (const auto& pt : leftEye)
-                cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
-            for (const auto& pt : rightEye)
-                cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
-
-            if (ear < EAR_THRESHOLD) {
-                frame_counter++;
-                if (frame_counter >= EAR_CONSEC_FRAMES) {
+            // 疲劳状态判断
+            if (currentState) {
+                if (++frameCounter >= EAR_CONSEC_FRAMES) {
                     fatigued = true;
-                    cv::putText(frame, "FATIGUE DETECTED!", cv::Point(50, 50), cv::FONT_HERSHEY_SIMPLEX, 1.0,
-                                cv::Scalar(0, 0, 255), 2);
                 }
             } else {
-                frame_counter = 0;
+                frameCounter = 0;
                 fatigued = false;
             }
 
-            // 显示 EAR 值
-            char text[50];
-            sprintf(text, "EAR: %.2f", ear);
-            cv::putText(frame, text, cv::Point(10, frame.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.6,
-                        fatigued ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0), 2);
+            // 绘制界面
+            cv::putText(displayFrame, 
+                       fatigued ? "FATIGUE ALERT!" : "NORMAL", 
+                       {10, 30}, 
+                       cv::FONT_HERSHEY_SIMPLEX, 
+                       0.8, 
+                       fatigued ? cv::Scalar(0,0,255) : cv::Scalar(0,255,0), 
+                       2);
+            
+            cv::imshow("Fatigue Detection", displayFrame);
+            if (cv::waitKey(1) == 'q') break;
+
+            camera->queueRequest(req.get()); // 重新入队
         }
 
-        cv::imshow("Fatigue Detection", frame);
-        if (cv::waitKey(1) == 'q') break;
-    }
+        // 清理资源
+        for (auto ptr : mappedBuffers) munmap(ptr, config->at(0).size.width * config->at(0).size.height * 3/2);
+        camera->stop();
 
+    } catch (const std::exception& e) {
+        std::cerr << "发生错误: " << e.what() << std::endl;
+        return -1;
+    }
     return 0;
 }
