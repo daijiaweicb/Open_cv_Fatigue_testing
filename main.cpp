@@ -43,11 +43,24 @@ int main() {
     }
 
     auto camera = cameras.front(); // 使用第一个摄像头
-    libcamera::CameraConfiguration config;
-    config.bufferCount = 4;
-    camera->configure(config);
 
-    if (camera->start()) {
+    // 获取 CameraConfiguration 对象
+    std::shared_ptr<libcamera::CameraConfiguration> config = camera->generateConfiguration({ libcamera::StreamRole::VideoRecording });
+
+    if (!config) {
+        std::cerr << "配置获取失败!" << std::endl;
+        return -1;
+    }
+
+    // 设置缓冲区数量
+    config->at(0).bufferCount = 4;
+
+    if (camera->configure(config.get()) < 0) {
+        std::cerr << "摄像头配置失败!" << std::endl;
+        return -1;
+    }
+
+    if (camera->start() < 0) {
         std::cerr << "摄像头启动失败!" << std::endl;
         return -1;
     }
@@ -65,10 +78,10 @@ int main() {
             break;
         }
 
-        camera->queueRequest(std::move(request));
+        camera->queueRequest(request.get()); // 传递指针
 
         // 获取帧缓冲区
-        libcamera::FrameBuffer* frameBuffer = request->buffers()[0].get();
+        const libcamera::FrameBuffer* frameBuffer = request->buffers()[0].get();
         if (frameBuffer == nullptr) {
             std::cerr << "捕获帧失败!" << std::endl;
             break;
@@ -77,9 +90,9 @@ int main() {
         // 获取帧缓冲区的第一个 plane
         const libcamera::FrameBuffer::Plane& plane = frameBuffer->planes()[0];
 
-        // 获取图像数据
-        uint8_t* data = static_cast<uint8_t*>(plane.mappedData());
-        size_t width = plane.width();
+        // 获取图像数据（假设数据已经映射到内存中）
+        uint8_t* data = plane.mappedData();
+        size_t width = plane.stride();
         size_t height = plane.height();
 
         // 将数据传递给 OpenCV
