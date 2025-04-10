@@ -111,8 +111,10 @@ int main() {
             auto req = camera->createRequest();
             if (!req) throw std::runtime_error("创建请求失败");
             
-            // 假设config->at(0).buffers[i]是你要使用的缓冲区
-            req->addBuffer(config->at(0).stream(), config->at(0).buffers[i].get());
+            // 适应最新的API
+            // 获取流和缓冲区并添加缓冲区
+            auto& stream = config->at(0).stream();
+            req->addBuffer(stream, config->at(0).buffers[i].get());
             requests.push_back(std::move(req));
         }
 
@@ -131,7 +133,7 @@ int main() {
         for (auto& req : requests) camera->queueRequest(req.get());
         
         while (true) {
-            auto req = camera->waitForRequest();
+            auto req = camera->requestCompleted(); // 获取已完成的请求
             auto* buffer = req->buffers()[config->at(0).stream()];
             const auto& plane = buffer->planes()[0];
             
@@ -142,40 +144,4 @@ int main() {
             // 每DETECTION_INTERVAL帧检测一次
             bool currentState = false;
             if (++frameCount % DETECTION_INTERVAL == 0) {
-                currentState = detector.detect(displayFrame);
-            }
-
-            // 疲劳状态判断
-            if (currentState) {
-                if (++frameCounter >= EAR_CONSEC_FRAMES) {
-                    fatigued = true;
-                }
-            } else {
-                frameCounter = 0;
-                fatigued = false;
-            }
-
-            // 绘制界面
-            cv::putText(displayFrame, 
-                       fatigued ? "FATIGUE ALERT!" : "NORMAL", 
-                       {10, 30}, 
-                       cv::FONT_HERSHEY_SIMPLEX, 
-                       0.8, 
-                       fatigued ? cv::Scalar(0,0,255) : cv::Scalar(0,255,0), 
-                       2);
-            
-            cv::imshow("Fatigue Detection", displayFrame);
-            if (cv::waitKey(1) == 'q') break;
-
-            camera->queueRequest(req.get()); // 重新入队
-        }
-
-        // 清理资源
-        camera->stop();
-
-    } catch (const std::exception& e) {
-        std::cerr << "发生错误: " << e.what() << std::endl;
-        return -1;
-    }
-    return 0;
-}
+                currentState = detector.detect(displayFrame
