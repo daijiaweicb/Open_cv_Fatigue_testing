@@ -17,13 +17,12 @@ find_package(dlib REQUIRED)
 # 包含目录
 include_directories(
     ${OpenCV_INCLUDE_DIRS}
-    ${dlib_INCLUDE_DIRS}
     ${LIBCAMERA_INCLUDE_DIR}
 )
 
 # 设置源文件
 set(SOURCES
-    src/main.cpp
+    main.cpp  # 如果 main.cpp 不在 src 文件夹中，请修改路径
 )
 
 # 添加可执行文件
