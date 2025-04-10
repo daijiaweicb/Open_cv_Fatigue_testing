@@ -1,44 +1,37 @@
-cmake_minimum_required(VERSION 3.10)
-
-project(FatigueDetection)
+cmake_minimum_required(VERSION 3.12)
+project(fatigue_detection)
 
 # 设置C++标准
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 找到 OpenCV 和 dlib 库
+# 查找OpenCV
 find_package(OpenCV REQUIRED)
-find_package(dlib REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
 
-# 设置 libcamera 的路径
-# 如果 libcamera 库没有安装到系统默认路径，使用以下语句设置路径
-set(LIBCAMERA_INCLUDE_DIR "/usr/include/libcamera")   # 请根据实际路径修改
-set(LIBCAMERA_LIB_DIR "/usr/lib/aarch64-linux-gnu")   # 请根据实际路径修改
+# 查找libcamera
+find_library(LIBCAMERA libcamera)
+find_path(LIBCAMERA_INCLUDE_DIR libcamera/camera.h)
 
-# 包含目录
+# 配置头文件包含路径
 include_directories(
-    ${OpenCV_INCLUDE_DIRS}
-    ${dlib_INCLUDE_DIRS}
-    ${LIBCAMERA_INCLUDE_DIR}   # 添加 libcamera 头文件路径
-)
-
-# 设置源文件
-set(SOURCES
-    main.cpp  # 如果 main.cpp 不在 src 文件夹中，请修改路径
+    ${LIBCAMERA_INCLUDE_DIR}
+    ${LIBCAMERA_INCLUDE_DIR}/libcamera
 )
 
 # 添加可执行文件
-add_executable(fatigue_detect ${SOURCES})
-
-# 链接 OpenCV、dlib 和 libcamera 库
-target_link_libraries(fatigue_detect
-    ${OpenCV_LIBS}
-    dlib::dlib
-    ${LIBCAMERA_LIB_DIR}/libcamera.so  # 根据实际路径修改
+add_executable(fatigue_detection
+    main.cpp
 )
 
-# 设置调试和发布配置
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_options(fatigue_detect PRIVATE -O3 -DNDEBUG)
-elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(fatigue_detect PRIVATE -g)
+# 链接库文件
+target_link_libraries(fatigue_detection
+    ${OpenCV_LIBS}
+    ${LIBCAMERA}
+    pthread
+)
+
+# 树莓派特定优化
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "armv7l")
+    add_compile_options(-march=armv8-a+crc -mfpu=neon-fp-armv8 -mfloat-abi=hard)
 endif()
