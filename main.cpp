@@ -5,7 +5,7 @@
 int main() {
     FILE* pipe = popen("libcamera-vid -t 0 --codec yuv420 --width 640 --height 480 -o -", "r");
     if (!pipe) {
-        std::cerr << "fail to start" << std::endl;
+        std::cerr << "无法启动 libcamera-vid，请检查摄像头连接状态" << std::endl;
         return -1;
     }
 
@@ -20,7 +20,7 @@ int main() {
     while (true) {
         size_t read_bytes = fread(buffer.data(), 1, frame_size, pipe);
         if (read_bytes != frame_size) {
-            std::cerr << "fail 2" << std::endl;
+            std::cerr << "读取失败，可能摄像头断开或输出结束" << std::endl;
             break;
         }
 
@@ -34,4 +34,3 @@ int main() {
     pclose(pipe);
     return 0;
 }
-
