@@ -43,11 +43,19 @@ int main() {
     }
 
     auto camera = cameras.front(); // 使用第一个摄像头
-    libcamera::CameraConfiguration config;
-    config.bufferCount = 4;
-    camera->configure(config);
 
-    if (camera->start()) {
+    // 使用 generateConfiguration() 配置相机
+    auto config = camera->generateConfiguration({libcamera::StreamRole::VideoRecording});
+    if (!config) {
+        std::cerr << "摄像头配置失败!" << std::endl;
+        return -1;
+    }
+
+    // 设置图像分辨率等配置
+    config->at(0).size = libcamera::Size(640, 480); // 设置图像分辨率
+
+    // 配置并启动摄像头
+    if (camera->configure(config.get()) != 0 || camera->start() != 0) {
         std::cerr << "摄像头启动失败!" << std::endl;
         return -1;
     }
@@ -58,14 +66,16 @@ int main() {
     bool fatigued = false;
 
     while (true) {
-        libcamera::FrameBuffer* frameBuffer = camera->capture();
+        // 捕获帧
+        auto frameBuffer = camera->capture();
         if (frameBuffer == nullptr) {
             std::cerr << "捕获帧失败!" << std::endl;
             break;
         }
 
-        // 将 libcamera 帧转换为 OpenCV 格式
-        cv::Mat frame = cv::Mat(frameBuffer->height(), frameBuffer->width(), CV_8UC3, frameBuffer->data());
+        // 获取图像数据
+        auto plane = frameBuffer->planes()[0]; // 获取第一个平面数据
+        cv::Mat frame(plane.height, plane.width, CV_8UC3, plane.data);
 
         dlib::cv_image<dlib::bgr_pixel> dlib_img(frame);
         std::vector<dlib::rectangle> faces = detector(dlib_img);
@@ -105,6 +115,7 @@ int main() {
                         fatigued ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0), 2);
         }
 
+        // 显示图像
         cv::imshow("Fatigue Detection", frame);
         if (cv::waitKey(1) == 'q') break;
     }
