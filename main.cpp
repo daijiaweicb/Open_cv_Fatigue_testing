@@ -32,7 +32,7 @@ int main() {
     dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
 
     // OpenCV 打开摄像头（树莓派上建议设置分辨率）
-    cv::VideoCapture cap(0);
+    cv::VideoCapture cap("/dev/video0");  // 改为直接使用 /dev/video0
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
 
