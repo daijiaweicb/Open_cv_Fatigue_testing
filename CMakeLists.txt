@@ -1,13 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
-project(csi_camera_viewer)
+project(fatigue_detection)
 
 set(CMAKE_CXX_STANDARD 17)
 
-
 find_package(OpenCV REQUIRED)
+find_package(dlib REQUIRED)
 
-
-add_executable(csi_cam main.cpp)
-
-
-target_link_libraries(csi_cam ${OpenCV_LIBS})
+add_executable(fatigue_detect main.cpp)
+target_link_libraries(fatigue_detect ${OpenCV_LIBS} dlib::dlib)
