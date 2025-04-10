@@ -2,6 +2,7 @@
 #include <dlib/opencv.h>
 #include <dlib/image_processing/frontal_face_detector.h>
 #include <dlib/image_processing.h>
+#include <libcamera/libcamera.h>
 #include <iostream>
 #include <vector>
 #include <chrono>
@@ -31,26 +32,40 @@ int main() {
     dlib::shape_predictor predictor;
     dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
 
-    // OpenCV 打开摄像头（树莓派上建议设置分辨率）
-    cv::VideoCapture cap(0, cv::CAP_V4L2);  // 强制使用 V4L2 驱动
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+    // 使用 libcamera 获取摄像头帧
+    libcamera::CameraManager cameraManager;
+    cameraManager.start();
+    auto cameras = cameraManager.cameras();
+    
+    if (cameras.empty()) {
+        std::cerr << "没有可用的摄像头!" << std::endl;
+        return -1;
+    }
 
-    if (!cap.isOpened()) {
-        std::cerr << "摄像头打开失败！" << std::endl;
+    auto camera = cameras.front(); // 使用第一个摄像头
+    libcamera::CameraConfiguration config;
+    config.bufferCount = 4;
+    camera->configure(config);
+
+    if (camera->start()) {
+        std::cerr << "摄像头启动失败!" << std::endl;
         return -1;
     }
 
     const double EAR_THRESHOLD = 0.21;
     const int EAR_CONSEC_FRAMES = 15;
-
     int frame_counter = 0;
     bool fatigued = false;
 
     while (true) {
-        cv::Mat frame;
-        cap >> frame;
-        if (frame.empty()) break;
+        libcamera::FrameBuffer* frameBuffer = camera->capture();
+        if (frameBuffer == nullptr) {
+            std::cerr << "捕获帧失败!" << std::endl;
+            break;
+        }
+
+        // 将 libcamera 帧转换为 OpenCV 格式
+        cv::Mat frame = cv::Mat(frameBuffer->height(), frameBuffer->width(), CV_8UC3, frameBuffer->data());
 
         dlib::cv_image<dlib::bgr_pixel> dlib_img(frame);
         std::vector<dlib::rectangle> faces = detector(dlib_img);
@@ -96,4 +111,3 @@ int main() {
 
     return 0;
 }
-
