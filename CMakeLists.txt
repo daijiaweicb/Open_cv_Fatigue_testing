@@ -1,15 +1,13 @@
 cmake_minimum_required(VERSION 3.10)
-project(CameraTest)
+project(csi_camera_viewer)
+
+set(CMAKE_CXX_STANDARD 17)
 
 
 find_package(OpenCV REQUIRED)
 
 
-message(STATUS "OpenCV Include Dir: ${OpenCV_INCLUDE_DIRS}")
-message(STATUS "OpenCV Libraries: ${OpenCV_LIBS}")
+add_executable(csi_cam main.cpp)
 
-include_directories(${OpenCV_INCLUDE_DIRS})
 
-add_executable(camera_test main.cpp)
-
-target_link_libraries(camera_test ${OpenCV_LIBS})
+target_link_libraries(csi_cam ${OpenCV_LIBS})
