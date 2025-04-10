@@ -9,25 +9,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-# 查找libcamera
-find_library(LIBCAMERA libcamera)
-find_path(LIBCAMERA_INCLUDE_DIR libcamera/camera.h)
+# 查找pkg-config
+find_package(PkgConfig REQUIRED)
+
+# 使用pkg-config查找libcamera
+pkg_check_modules(LIBCAMERA REQUIRED libcamera)
 
 # 配置头文件包含路径
 include_directories(
-    ${LIBCAMERA_INCLUDE_DIR}
-    ${LIBCAMERA_INCLUDE_DIR}/libcamera
+    ${OpenCV_INCLUDE_DIRS}
+    ${LIBCAMERA_INCLUDE_DIRS}  # 从 pkg-config 提供的路径
 )
 
 # 添加可执行文件
-add_executable(fatigue_detection
-    main.cpp
-)
+add_executable(fatigue_detection main.cpp)
 
 # 链接库文件
 target_link_libraries(fatigue_detection
     ${OpenCV_LIBS}
-    ${LIBCAMERA}
+    ${LIBCAMERA_LIBRARIES}  # 使用 pkg-config 提供的 libcamera 库
     pthread
 )
 
