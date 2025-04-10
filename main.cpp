@@ -7,6 +7,7 @@
 #include <vector>
 #include <chrono>
 
+// EAR 计算函数
 double computeEAR(const std::vector<cv::Point>& eye) {
     double A = cv::norm(eye[1] - eye[5]);
     double B = cv::norm(eye[2] - eye[4]);
@@ -14,6 +15,7 @@ double computeEAR(const std::vector<cv::Point>& eye) {
     return (A + B) / (2.0 * C);
 }
 
+// 提取眼睛关键点
 std::vector<cv::Point> getEyePoints(const dlib::full_object_detection& shape, bool left) {
     std::vector<cv::Point> points;
     int start = left ? 36 : 42;
@@ -25,46 +27,28 @@ std::vector<cv::Point> getEyePoints(const dlib::full_object_detection& shape, bo
 }
 
 int main() {
-    // Initialize Dlib detector and model
+    // 初始化 Dlib 检测器和模型
     dlib::frontal_face_detector detector = dlib::get_frontal_face_detector();
     dlib::shape_predictor predictor;
     dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
 
-    // Initialize libcamera
+    // 使用 libcamera 获取摄像头帧
     libcamera::CameraManager cameraManager;
     cameraManager.start();
     auto cameras = cameraManager.cameras();
 
     if (cameras.empty()) {
-        std::cerr << "No available cameras!" << std::endl;
+        std::cerr << "没有可用的摄像头!" << std::endl;
         return -1;
     }
 
-    auto camera = cameras.front();  // Use the first available camera
+    auto camera = cameras.front(); // 使用第一个摄像头
+    libcamera::CameraConfiguration config;
+    config.bufferCount = 4;
+    camera->configure(config);
 
-    // Set up camera configuration
-    auto config = camera->generateConfiguration({libcamera::StreamRole::VideoRecording});
-    if (!config) {
-        std::cerr << "Failed to configure camera!" << std::endl;
-        return -1;
-    }
-    config->at(0).size = libcamera::Size(640, 480);  // Set the resolution
-
-    if (camera->configure(config.get()) != 0) {
-        std::cerr << "Failed to configure the camera stream!" << std::endl;
-        return -1;
-    }
-
-    // Start the camera
-    if (camera->start() != 0) {
-        std::cerr << "Failed to start the camera!" << std::endl;
-        return -1;
-    }
-
-    // Create a request to capture frames
-    libcamera::Request *request = camera->createRequest();
-    if (!request) {
-        std::cerr << "Failed to create capture request!" << std::endl;
+    if (camera->start()) {
+        std::cerr << "摄像头启动失败!" << std::endl;
         return -1;
     }
 
@@ -74,18 +58,34 @@ int main() {
     bool fatigued = false;
 
     while (true) {
-        // Capture a frame from the camera
-        libcamera::FrameBuffer *frameBuffer = nullptr;
-        camera->queueRequest(request);
-        if (frameBuffer == nullptr) {
-            std::cerr << "Frame capture failed!" << std::endl;
+        // 创建请求并捕获帧
+        std::unique_ptr<libcamera::Request> request = camera->createRequest();
+        if (!request) {
+            std::cerr << "创建请求失败!" << std::endl;
             break;
         }
 
-        // Retrieve frame data and convert to OpenCV Mat
-        auto plane = frameBuffer->planes()[0];  // Get the first plane
-        cv::Mat frame(plane.height, plane.width, CV_8UC3, plane.data);
+        camera->queueRequest(std::move(request));
 
+        // 获取帧缓冲区
+        libcamera::FrameBuffer* frameBuffer = request->buffers()[0].get();
+        if (frameBuffer == nullptr) {
+            std::cerr << "捕获帧失败!" << std::endl;
+            break;
+        }
+
+        // 获取帧缓冲区的第一个 plane
+        const libcamera::FrameBuffer::Plane& plane = frameBuffer->planes()[0];
+
+        // 获取图像数据
+        uint8_t* data = static_cast<uint8_t*>(plane.mappedData());
+        size_t width = plane.width();
+        size_t height = plane.height();
+
+        // 将数据传递给 OpenCV
+        cv::Mat frame(height, width, CV_8UC3, data);
+
+        // 转换为 Dlib 图像
         dlib::cv_image<dlib::bgr_pixel> dlib_img(frame);
         std::vector<dlib::rectangle> faces = detector(dlib_img);
 
@@ -99,7 +99,7 @@ int main() {
             double rightEAR = computeEAR(rightEye);
             double ear = (leftEAR + rightEAR) / 2.0;
 
-            // Visualize eye contours
+            // 可视化眼睛轮廓
             for (const auto& pt : leftEye)
                 cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
             for (const auto& pt : rightEye)
@@ -117,14 +117,13 @@ int main() {
                 fatigued = false;
             }
 
-            // Display EAR value
+            // 显示 EAR 值
             char text[50];
             sprintf(text, "EAR: %.2f", ear);
             cv::putText(frame, text, cv::Point(10, frame.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.6,
                         fatigued ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0), 2);
         }
 
-        // Show the processed frame
         cv::imshow("Fatigue Detection", frame);
         if (cv::waitKey(1) == 'q') break;
     }
