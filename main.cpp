@@ -70,7 +70,12 @@ private:
         int start = left ? 36 : 42;
         for (int i = 0; i < 6; ++i) {
             auto pt = shape.part(start + i);
-            points.emplace_back(pt.x() / RESIZE_SCALE, pt.y() / RESIZE_SCALE);
+            // 避免除以零
+            if (RESIZE_SCALE != 0) {
+                points.emplace_back(pt.x() / RESIZE_SCALE, pt.y() / RESIZE_SCALE);
+            } else {
+                points.emplace_back(pt.x(), pt.y());  // 避免除以零
+            }
         }
         return points;
     }
@@ -100,24 +105,14 @@ int main() {
             throw std::runtime_error("配置应用失败");
         }
 
-        // 映射内存
-        std::vector<void*> mappedBuffers;
-        for (const auto& buffer : config->at(0).buffers) {
-            const auto& plane = buffer->planes()[0];
-            void* data = mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
-            if (data == MAP_FAILED) throw std::runtime_error("内存映射失败");
-            mappedBuffers.push_back(data);
-        }
-
         // 创建请求池
         std::vector<std::unique_ptr<libcamera::Request>> requests;
         for (unsigned int i = 0; i < config->at(0).bufferCount; ++i) {
             auto req = camera->createRequest();
             if (!req) throw std::runtime_error("创建请求失败");
             
-            if (req->addBuffer(config->at(0).stream(), config->at(0).buffers[i].get()) < 0) {
-                throw std::runtime_error("添加缓冲区失败");
-            }
+            // 假设config->at(0).buffers[i]是你要使用的缓冲区
+            req->addBuffer(config->at(0).stream(), config->at(0).buffers[i].get());
             requests.push_back(std::move(req));
         }
 
@@ -136,12 +131,12 @@ int main() {
         for (auto& req : requests) camera->queueRequest(req.get());
         
         while (true) {
-            auto req = camera->waitForCompletedRequest();
+            auto req = camera->waitForRequest();
             auto* buffer = req->buffers()[config->at(0).stream()];
             const auto& plane = buffer->planes()[0];
             
             // YUV420转BGR
-            cv::Mat yuv(480 * 3/2, 640, CV_8UC1, mappedBuffers[buffer->index()]);
+            cv::Mat yuv(480 * 3/2, 640, CV_8UC1, buffer->data());
             cv::cvtColor(yuv, displayFrame, cv::COLOR_YUV2BGR_I420);
             
             // 每DETECTION_INTERVAL帧检测一次
@@ -176,7 +171,6 @@ int main() {
         }
 
         // 清理资源
-        for (auto ptr : mappedBuffers) munmap(ptr, config->at(0).size.width * config->at(0).size.height * 3/2);
         camera->stop();
 
     } catch (const std::exception& e) {
