@@ -7,7 +7,7 @@ project(FatigueDetection VERSION 1.0)
 find_package(OpenCV REQUIRED)
 
 # 查找 Dlib 包
-find_package(Dlib REQUIRED)
+find_package(dlib REQUIRED)
 
 # 查找 libcamera
 find_library(LIBCAME_LIB cam REQUIRED)
