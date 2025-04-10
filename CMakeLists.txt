@@ -23,7 +23,7 @@ include_directories(
 
 # 设置源文件
 set(SOURCES
-    src/main.cpp  # 如果 main.cpp 不在 src 文件夹中，请修改路径
+    main.cpp  # 如果 main.cpp 不在 src 文件夹中，请修改路径
 )
 
 # 添加可执行文件
