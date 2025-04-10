@@ -13,7 +13,7 @@ find_package(dlib REQUIRED)
 find_library(LIBCAME_LIB NAMES camera libcamera REQUIRED)
 
 # 设置 C++ 标准
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 
 # 设置可执行文件
 add_executable(fatigue_detect main.cpp)
