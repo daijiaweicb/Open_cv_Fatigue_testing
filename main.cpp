@@ -3,7 +3,7 @@
 #include <vector>
 
 int main() {
-    FILE* pipe = popen("libcamera-vid -t 0 --codec yuv420 --width 640 --height 480 -o -", "r");
+    FILE* pipe = popen("libcamera-vid -t 0 --codec yuv420 --width 640 --height 480 -n -o -", "r");
     if (!pipe) {
         std::cerr << "无法启动 libcamera-vid，请检查摄像头连接状态" << std::endl;
         return -1;
