@@ -10,7 +10,7 @@ find_package(OpenCV REQUIRED)
 find_package(dlib REQUIRED)
 
 # 查找 libcamera
-find_library(LIBCAME_LIB cam REQUIRED)
+find_library(LIBCAME_LIB NAMES camera libcamera REQUIRED)
 
 # 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 11)
