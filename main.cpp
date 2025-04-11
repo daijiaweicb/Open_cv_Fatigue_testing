@@ -207,6 +207,7 @@ int main() {
 
     std::cout << "按下 q 键退出..." << std::endl;
     while (!cb.exit()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::cout << "100 miliseconds" << std:: endl;
 
     cam.stop();
     return 0;
