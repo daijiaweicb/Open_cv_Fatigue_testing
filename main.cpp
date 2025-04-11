@@ -60,10 +60,10 @@ public:
             for (const auto& pt : right_eye) cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
-        cv::imshow("Fatigue Detection", frame);
-        if (cv::waitKey(1) == 'q') {
-            cam.stop();
-        }
+        // cv::imshow("Fatigue Detection", frame);
+        // if (cv::waitKey(1) == 'q') {
+        //     cam.stop();
+        // }
     }
 
 private:
