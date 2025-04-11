@@ -7,7 +7,6 @@
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
 #include <libcamera/libcamera.h>
-#include <libcamera/event_dispatcher.h>
 #include <sys/mman.h>
 #include <functional>
 
