@@ -63,7 +63,7 @@ int main() {
         }
 
         memcpy(yuvImg.data, buffer.data(), frame_size);
-        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);
+        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_NV12);
         cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
 
         std::vector<cv::Rect> faces;
