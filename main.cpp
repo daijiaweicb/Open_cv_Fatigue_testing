@@ -40,7 +40,7 @@ public:
         config->validate();
         camera->configure(config.get());
 
-        allocator = new libcamera::FrameBufferAllocator(camera.get());
+        allocator = new libcamera::FrameBufferAllocator(camera);
         stream = streamConfig.stream();
         allocator->allocate(stream);
 
