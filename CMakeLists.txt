@@ -9,6 +9,10 @@ find_package(OpenCV REQUIRED)
 # dlib
 find_package(dlib REQUIRED)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBCAMERA REQUIRED libcamera)
+
+
 # 添加可执行文件
 add_executable(fatigue_detection
     main.cpp
