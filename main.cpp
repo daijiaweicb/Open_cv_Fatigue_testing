@@ -11,7 +11,6 @@
 #include <libcamera/libcamera.h>
 #include <sys/mman.h>
 
-// --------- libcam2opencv core (minimal inline) ------------
 class Libcam2OpenCV {
 public:
     struct Callback {
@@ -36,7 +35,10 @@ public:
         libcamera::StreamConfiguration &streamConfig = config->at(0);
         streamConfig.size.width = width;
         streamConfig.size.height = height;
-        streamConfig.pixelFormat = libcamera::formats::BGR888;
+
+        // ✅ 修复 timeout 问题：使用 XRGB8888（树莓派更兼容）
+        streamConfig.pixelFormat = libcamera::formats::XRGB8888;
+
         config->validate();
         camera->configure(config.get());
 
@@ -51,6 +53,10 @@ public:
                 buffer_size += plane.length;
                 if (i == buffer->planes().size() - 1 || plane.fd.get() != buffer->planes()[i + 1].fd.get()) {
                     void *memory = mmap(nullptr, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, plane.fd.get(), 0);
+                    if (memory == MAP_FAILED) {
+                        perror("mmap failed");
+                        exit(1);
+                    }
                     mapped_buffers[buffer.get()].emplace_back(static_cast<uint8_t *>(memory), buffer_size);
                     buffer_size = 0;
                 }
@@ -113,11 +119,18 @@ private:
             auto mem = Mmap(buffer);
             auto &cfg = config->at(0);
             unsigned int w = cfg.size.width, h = cfg.size.height, stride = cfg.stride;
-            frame.create(h, w, CV_8UC3);
+
+            // ✅ 注意：XRGB8888 是 4通道图像（8位）
+            frame.create(h, w, CV_8UC4);
             uint8_t *ptr = mem[0].data();
             for (unsigned int i = 0; i < h; ++i, ptr += stride)
-                memcpy(frame.ptr(i), ptr, w * 3);
-            if (callback) callback->hasFrame(frame, meta);
+                memcpy(frame.ptr(i), ptr, w * 4);
+
+            // ✅ 转换为 BGR 图像，便于处理
+            cv::Mat bgr;
+            cv::cvtColor(frame, bgr, cv::COLOR_BGRA2BGR);
+
+            if (callback) callback->hasFrame(bgr, meta);
         }
 
         request->reuse(libcamera::Request::ReuseBuffers);
