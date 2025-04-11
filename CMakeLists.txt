@@ -10,7 +10,6 @@ find_package(OpenCV REQUIRED)
 # libcamera (通过 pkg-config)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCAMERA REQUIRED libcamera)
-pkg_check_modules(LIBCAMERA_BASE REQUIRED libcamera-base)  # 有时 event_dispatcher.h 属于这个
 
 # dlib (手动链接 + 头文件路径)
 find_path(DLIB_INCLUDE_DIR dlib/opencv.h)

@@ -207,8 +207,8 @@ int main() {
     std::cout << "按下 q 键退出..." << std::endl;
 
     while (!cb.exit()) {
-        libcamera::EventDispatcher::instance()->processEvents();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // 什么都不做，仅保持主线程活着
     }
 
     cam.stop();
