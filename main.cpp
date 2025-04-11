@@ -1,9 +1,8 @@
 #include <iostream>
-#include <cstdio>
-#include <vector>
 #include <opencv2/opencv.hpp>
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
+#include "libcam2opencv.h"
 
 float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
     float A = cv::norm(eye[1] - eye[5]);
@@ -20,60 +19,26 @@ std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, b
     return eye;
 }
 
-int main() {
-    const int width = 1280;  // 更高的分辨率来拍摄近距离图像
-    const int height = 720;
-    const int frame_size = width * height * 3 / 2;  // YUV420
-    std::vector<uchar> buffer(frame_size);
-    cv::Mat yuvImg(height + height / 2, width, CV_8UC1);
-    cv::Mat bgrImg, gray;
+Libcam2OpenCV cam;
 
-    // 启动 libcamera-vid 并设置更高的分辨率
-    FILE* pipe = popen("libcamera-vid --width 1280 --height 720 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
-    if (!pipe) {
-        std::cerr << "无法启动 libcamera-vid" << std::endl;
-        return -1;
-    }
-
-    // 加载模型
-    dlib::shape_predictor predictor;
-    try {
+class FatigueDetector : public Libcam2OpenCV::Callback {
+public:
+    FatigueDetector() {
         dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
-    } catch (std::exception& e) {
-        std::cerr << "无法加载关键点模型：" << e.what() << std::endl;
-        return -1;
+        face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml");
     }
 
-    // 加载 Haar 人脸检测器
-    cv::CascadeClassifier face_cascade;
-    if (!face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml")) {
-        std::cerr << "无法加载 Haar 模型" << std::endl;
-        return -1;
-    }
+    void hasFrame(const cv::Mat &frame, const libcamera::ControlList &) override {
+        cv::Mat gray;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
-    const float EAR_THRESHOLD = 0.25f;
-    const int EYES_CLOSED_FRAMES = 15;
-    int counter = 0;
-
-    while (true) {
-        size_t read_bytes = fread(buffer.data(), 1, frame_size, pipe);
-        if (read_bytes != frame_size) {
-            std::cerr << "读取失败或结束" << std::endl;
-            break;
-        }
-
-        memcpy(yuvImg.data, buffer.data(), frame_size);
-        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);
-        cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
-
-        // 使用较高的分辨率更准确地检测人脸
         std::vector<cv::Rect> faces;
         face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(100, 100));
 
         for (const auto& face : faces) {
-            cv::rectangle(bgrImg, face, cv::Scalar(255, 0, 0), 2);
+            cv::rectangle(frame, face, cv::Scalar(255, 0, 0), 2);
 
-            dlib::cv_image<dlib::bgr_pixel> cimg(bgrImg);
+            dlib::cv_image<dlib::bgr_pixel> cimg(frame);
             dlib::rectangle dlib_rect(face.x, face.y, face.x + face.width, face.y + face.height);
             dlib::full_object_detection shape = predictor(cimg, dlib_rect);
 
@@ -84,22 +49,52 @@ int main() {
             if (ear < EAR_THRESHOLD) {
                 counter++;
                 if (counter >= EYES_CLOSED_FRAMES) {
-                    cv::putText(bgrImg, "DROWSINESS ALERT!", cv::Point(50, 50),
+                    cv::putText(frame, "DROWSINESS ALERT!", cv::Point(50, 50),
                                 cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
                 }
             } else {
                 counter = 0;
             }
 
-            for (const auto& pt : left_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
-            for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+            for (const auto& pt : left_eye) cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
+            for (const auto& pt : right_eye) cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
-        cv::imshow("Fatigue Detection (Higher Res)", bgrImg);
-        int key = cv::waitKey(1);
-        if (key == 'q' || key == 27) break;
+        cv::imshow("Fatigue Detection", frame);
+        if (cv::waitKey(1) == 'q') {
+            cam.stop();
+        }
     }
 
-    pclose(pipe);
+private:
+    dlib::shape_predictor predictor;
+    cv::CascadeClassifier face_cascade;
+    const float EAR_THRESHOLD = 0.25f;
+    const int EYES_CLOSED_FRAMES = 15;
+    int counter = 0;
+};
+
+bool cam_running() {
+    cv::waitKey(1);
+    return cv::getWindowProperty("Fatigue Detection", cv::WND_PROP_VISIBLE) >= 1;
+}
+
+int main() {
+    FatigueDetector detector;
+    cam.registerCallback(&detector);
+
+    Libcam2OpenCVSettings settings;
+    settings.width = 1280;
+    settings.height = 720;
+    settings.framerate = 15;
+    settings.brightness = 0.0;
+    settings.contrast = 1.0;
+
+    cam.start(settings);
+
+    while (cam_running()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
     return 0;
 }
