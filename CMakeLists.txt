@@ -15,12 +15,10 @@ add_executable(fatigue_detection
     libcam2opencv.cpp
 )
 
-# 包含头文件
-target_include_directories(fatigue_detection PRIVATE ${OpenCV_INCLUDE_DIRS} ${dlib_INCLUDE_DIRS})
-
 # 链接库
 target_link_libraries(fatigue_detection
     ${OpenCV_LIBS}
     dlib::dlib
     pthread
 )
+
