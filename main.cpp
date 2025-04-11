@@ -21,15 +21,15 @@ std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, b
 }
 
 int main() {
-    const int width = 3280;
-    const int height = 2462;
+    const int width = 1640;
+    const int height = 1232;
     const int frame_size = width * height * 3 / 2;  // YUV420
     std::vector<uchar> buffer(frame_size);
     cv::Mat yuvImg(height + height / 2, width, CV_8UC1);
     cv::Mat bgrImg, gray;
 
     // 启动 libcamera-vid
-    FILE* pipe = popen("libcamera-vid --width 3280 --height 2462 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
+    FILE* pipe = popen("libcamera-vid --width 1640 --height 1232 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
     if (!pipe) {
         std::cerr << "无法启动 libcamera-vid" << std::endl;
         return -1;
