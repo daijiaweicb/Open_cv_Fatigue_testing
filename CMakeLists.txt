@@ -3,29 +3,25 @@ project(FatigueDetection)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# 找 OpenCV
+# 查找 OpenCV 和 dlib
 find_package(OpenCV REQUIRED)
-
-# 找 dlib
 find_package(dlib REQUIRED)
 
-# 添加 libcamera
-find_library(LIBCAMERA_LIB camera REQUIRED)
+# 添加 libcamera 手动查找（或你也可以写死路径）
+find_path(LIBCAMERA_INCLUDE_DIR NAMES libcamera/libcamera.h)
+find_library(LIBCAMERA_LIB NAMES camera REQUIRED)
 
-# 头文件路径
 include_directories(
     ${OpenCV_INCLUDE_DIRS}
-    ${dlib_INCLUDE_DIRS}
+    ${LIBCAMERA_INCLUDE_DIR}
     .
 )
 
-# 源文件
 add_executable(fatigue_detect
     main.cpp
     libcam2opencv.cpp
 )
 
-# 链接库
 target_link_libraries(fatigue_detect
     ${OpenCV_LIBS}
     dlib::dlib
