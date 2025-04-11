@@ -6,19 +6,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # OpenCV
 find_package(OpenCV REQUIRED)
-include_directories(${OpenCV_INCLUDE_DIRS})
 
-# libcamera
+# libcamera (通过 pkg-config)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCAMERA REQUIRED libcamera)
 
-# dlib (非模块安装，用 find_library)
+# dlib (通过 apt 安装的)
 find_library(DLIB_LIB dlib)
 
-# 找到 BLAS（为了解决 cblas_dgemm 链接问题）
+# BLAS + LAPACK （dlib 内部依赖）
 find_package(BLAS REQUIRED)
+find_package(LAPACK REQUIRED)
 
-# 包含目录
+# 头文件路径
 include_directories(
     ${OpenCV_INCLUDE_DIRS}
     ${LIBCAMERA_INCLUDE_DIRS}
@@ -33,5 +33,6 @@ target_link_libraries(fatigue_detection
     ${LIBCAMERA_LIBRARIES}
     ${DLIB_LIB}
     ${BLAS_LIBRARIES}
+    ${LAPACK_LIBRARIES}
     pthread
 )
