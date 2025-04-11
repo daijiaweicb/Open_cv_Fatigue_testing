@@ -11,12 +11,12 @@ find_package(dlib REQUIRED)
 
 # 添加可执行文件
 add_executable(fatigue_detection
-    fatigue_detection.cpp
+    main.cpp
     libcam2opencv.cpp
 )
 
 # 链接库
-target_link_libraries(fatigue_detection
+target_link_libraries(main
     ${OpenCV_LIBS}
     dlib::dlib
     pthread
