@@ -10,27 +10,38 @@ find_package(OpenCV REQUIRED)
 # libcamera (通过 pkg-config)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCAMERA REQUIRED libcamera)
+pkg_check_modules(LIBCAMERA_BASE REQUIRED libcamera-base)  # 有时 event_dispatcher.h 属于这个
 
-# dlib (通过 apt 安装的)
+# dlib (手动链接 + 头文件路径)
+find_path(DLIB_INCLUDE_DIR dlib/opencv.h)
 find_library(DLIB_LIB dlib)
 
 # BLAS + LAPACK （dlib 内部依赖）
 find_package(BLAS REQUIRED)
 find_package(LAPACK REQUIRED)
 
+# 输出用于调试
+message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")
+message(STATUS "Libcamera include dirs: ${LIBCAMERA_INCLUDE_DIRS}")
+message(STATUS "Libcamera-base include dirs: ${LIBCAMERA_BASE_INCLUDE_DIRS}")
+message(STATUS "Dlib include dir: ${DLIB_INCLUDE_DIR}")
+
 # 头文件路径
 include_directories(
     ${OpenCV_INCLUDE_DIRS}
     ${LIBCAMERA_INCLUDE_DIRS}
+    ${LIBCAMERA_BASE_INCLUDE_DIRS}
+    ${DLIB_INCLUDE_DIR}
 )
 
-# 可执行文件
+# 源码
 add_executable(fatigue_detection main.cpp)
 
 # 链接库
 target_link_libraries(fatigue_detection
     ${OpenCV_LIBS}
     ${LIBCAMERA_LIBRARIES}
+    ${LIBCAMERA_BASE_LIBRARIES}
     ${DLIB_LIB}
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
