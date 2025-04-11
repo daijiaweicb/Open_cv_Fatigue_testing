@@ -70,34 +70,42 @@ int main() {
         eyes_cascade.detectMultiScale(gray, eyes, 1.1, 3, 0, cv::Size(30, 30));
 
         if (eyes.size() >= 2) {
-            // 默认取前两个眼睛框
             dlib::cv_image<dlib::bgr_pixel> cimg(bgrImg);
-            cv::Rect eye_union = eyes[0] | eyes[1];  // 合并区域
-            dlib::rectangle region(eye_union.x, eye_union.y,
-                                   eye_union.x + eye_union.width,
-                                   eye_union.y + eye_union.height);
 
-            dlib::full_object_detection shape = predictor(cimg, region);
+            // 分别扩展眼睛区域（保证包含周围面部结构）
+            cv::Rect left_roi = eyes[0] + cv::Size(40, 40);
+            cv::Rect right_roi = eyes[1] + cv::Size(40, 40);
+            left_roi &= cv::Rect(0, 0, bgrImg.cols, bgrImg.rows);
+            right_roi &= cv::Rect(0, 0, bgrImg.cols, bgrImg.rows);
 
-            auto left_eye = extract_eye(shape, true);
-            auto right_eye = extract_eye(shape, false);
-            float ear = (eye_aspect_ratio(left_eye) + eye_aspect_ratio(right_eye)) / 2.0f;
+            dlib::rectangle left_region(left_roi.x, left_roi.y, left_roi.x + left_roi.width, left_roi.y + left_roi.height);
+            dlib::rectangle right_region(right_roi.x, right_roi.y, right_roi.x + right_roi.width, right_roi.y + right_roi.height);
 
-            if (ear < EAR_THRESHOLD) {
-                counter++;
-                if (counter >= EYES_CLOSED_FRAMES) {
-                    cv::putText(bgrImg, "DROWSINESS ALERT!", cv::Point(50, 50),
-                                cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
+            dlib::full_object_detection shape_left = predictor(cimg, left_region);
+            dlib::full_object_detection shape_right = predictor(cimg, right_region);
+
+            if (shape_left.num_parts() == 68 && shape_right.num_parts() == 68) {
+                auto left_eye = extract_eye(shape_left, true);
+                auto right_eye = extract_eye(shape_right, false);
+
+                float ear = (eye_aspect_ratio(left_eye) + eye_aspect_ratio(right_eye)) / 2.0f;
+
+                if (ear < EAR_THRESHOLD) {
+                    counter++;
+                    if (counter >= EYES_CLOSED_FRAMES) {
+                        cv::putText(bgrImg, "DROWSINESS ALERT!", cv::Point(50, 50),
+                                    cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
+                    }
+                } else {
+                    counter = 0;
                 }
-            } else {
-                counter = 0;
-            }
 
-            for (const auto& pt : left_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
-            for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+                for (const auto& pt : left_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+                for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+            }
         }
 
-        cv::imshow("Fatigue Detection (Eyes Only)", bgrImg);
+        cv::imshow("Fatigue Detection (Eye-Only, dlib-stable)", bgrImg);
         int key = cv::waitKey(1);
         if (key == 'q' || key == 27) break;
     }
