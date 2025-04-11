@@ -8,8 +8,13 @@ find_package(OpenCV REQUIRED)
 find_package(dlib REQUIRED)
 
 # 添加 libcamera 手动查找（或你也可以写死路径）
-find_path(LIBCAMERA_INCLUDE_DIR NAMES libcamera/libcamera.h)
-find_library(LIBCAMERA_LIB NAMES camera REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+# 使用pkg-config查找libcamera
+pkg_check_modules(LIBCAMERA REQUIRED libcamera)
+
+
+
 
 include_directories(
     ${OpenCV_INCLUDE_DIRS}
