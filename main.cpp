@@ -1,19 +1,20 @@
-#include <iostream>
+#include "libcam2opencv.h"
+
 #include <opencv2/opencv.hpp>
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
-#include "libcam2opencv.h"
 
-float eye_aspect_ratio(const std::vector<cv::Point2f> &eye)
-{
+#include <iostream>
+#include <vector>
+
+float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
     float A = cv::norm(eye[1] - eye[5]);
     float B = cv::norm(eye[2] - eye[4]);
     float C = cv::norm(eye[0] - eye[3]);
     return (A + B) / (2.0f * C);
 }
 
-std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection &shape, bool left)
-{
+std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, bool left) {
     std::vector<cv::Point2f> eye;
     int start = left ? 36 : 42;
     for (int i = 0; i < 6; ++i)
@@ -21,45 +22,33 @@ std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection &shape, b
     return eye;
 }
 
-Libcam2OpenCV cam;
-
-class FatigueDetector : public Libcam2OpenCV::Callback
-{
+// 回调类：接收每一帧
+class FatigueCallback : public Libcam2OpenCV::Callback {
 public:
-    FatigueDetector()
-    {
-        dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
-        face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml");
-        cv::namedWindow("Fatigue Detection", cv::WINDOW_NORMAL);
-        cv::resizeWindow("Fatigue Detection", 1280, 960); // 强制放大
-    }
-
-    void hasFrame(const cv::Mat &frame, const libcamera::ControlList &) override
-    {
-        std::cerr << "[CALLBACK] hasFrame triggered!" << std::endl;
-        std::cerr << "[DEBUG] frame.empty(): " << frame.empty()
-                  << ", size: " << frame.cols << "x" << frame.rows
-                  << ", type: " << frame.type() << std::endl;
-
-        static int saved = 0;
-        if (!saved && !frame.empty())
-        {
-            cv::imwrite("frame_debug.jpg", frame);
-            std::cerr << "[DEBUG] frame saved to frame_debug.jpg" << std::endl;
-            saved = 1;
+    FatigueCallback() {
+        // 加载 dlib 关键点模型
+        try {
+            dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
+        } catch (std::exception& e) {
+            std::cerr << "无法加载关键点模型：" << e.what() << std::endl;
+            exit(1);
         }
 
-        if (frame.empty())
-            return;
+        // 加载 Haar 人脸检测器
+        if (!face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml")) {
+            std::cerr << "无法加载 Haar 模型" << std::endl;
+            exit(1);
+        }
+    }
 
+    void hasFrame(const cv::Mat& frame, const libcamera::ControlList&) override {
         cv::Mat gray;
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
         std::vector<cv::Rect> faces;
-        face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(100, 100));
+        face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
 
-        for (const auto &face : faces)
-        {
+        for (const auto& face : faces) {
             cv::rectangle(frame, face, cv::Scalar(255, 0, 0), 2);
 
             dlib::cv_image<dlib::bgr_pixel> cimg(frame);
@@ -70,73 +59,59 @@ public:
             auto right_eye = extract_eye(shape, false);
             float ear = (eye_aspect_ratio(left_eye) + eye_aspect_ratio(right_eye)) / 2.0f;
 
-            if (ear < EAR_THRESHOLD)
-            {
+            if (ear < EAR_THRESHOLD) {
                 counter++;
-                if (counter >= EYES_CLOSED_FRAMES)
-                {
+                if (counter >= EYES_CLOSED_FRAMES) {
                     cv::putText(frame, "DROWSINESS ALERT!", cv::Point(50, 50),
-                                cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
+                        cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
                 }
-            }
-            else
-            {
+            } else {
                 counter = 0;
             }
 
-            for (const auto &pt : left_eye)
-                cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
-            for (const auto &pt : right_eye)
-                cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
+            for (const auto& pt : left_eye) cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
+            for (const auto& pt : right_eye) cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
-        try
-        {
-            cv::imshow("Fatigue Detection", frame);
+        cv::imshow("Fatigue Detection (C++ API)", frame);
+        if (cv::waitKey(1) == 'q') {
+            should_exit = true;
         }
-        catch (const cv::Exception &e)
-        {
-            std::cerr << "[OpenCV Exception] " << e.what() << std::endl;
-        }
+    }
 
-        if (cv::waitKey(1) == 'q')
-        {
-            cam.stop();
-        }
+    bool exit_requested() const {
+        return should_exit;
     }
 
 private:
     dlib::shape_predictor predictor;
     cv::CascadeClassifier face_cascade;
+
     const float EAR_THRESHOLD = 0.25f;
     const int EYES_CLOSED_FRAMES = 15;
     int counter = 0;
+    bool should_exit = false;
 };
 
-bool cam_running()
-{
-    cv::waitKey(1);
-    return cv::getWindowProperty("Fatigue Detection", cv::WND_PROP_VISIBLE) >= 1;
-}
+int main() {
+    Libcam2OpenCV camera;
+    FatigueCallback cb;
 
-int main()
-{
-    FatigueDetector detector;
-    cam.registerCallback(&detector);
+    camera.registerCallback(&cb);
 
     Libcam2OpenCVSettings settings;
-    settings.width = 1280;
-    settings.height = 960;
+    settings.width = 640;
+    settings.height = 480;
     settings.framerate = 15;
-    settings.brightness = 0.0;
-    settings.contrast = 1.0;
 
-    cam.start(settings);
+    camera.start(settings);
 
-    while (cam_running())
-    {
+    std::cout << "按下 q 键退出..." << std::endl;
+
+    while (!cb.exit_requested()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    camera.stop();
     return 0;
 }
