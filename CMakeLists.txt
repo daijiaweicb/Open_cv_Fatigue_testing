@@ -1,21 +1,25 @@
 cmake_minimum_required(VERSION 3.10)
-project(FatigueNoVCam)
+project(FatigueDetection)
 
-# 使用 C++17 标准
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 查找 OpenCV
+# OpenCV
 find_package(OpenCV REQUIRED)
 
-# 查找 dlib
+# dlib
 find_package(dlib REQUIRED)
 
-# 添加源文件
-add_executable(FatigueNoVCam main.cpp)
+# 添加可执行文件
+add_executable(fatigue_detection
+    fatigue_detection.cpp
+    libcam2opencv.cpp
+)
 
-# 链接 OpenCV、dlib 和 pthread（用于多线程，保险起见）
-target_link_libraries(FatigueNoVCam
+# 包含头文件
+target_include_directories(fatigue_detection PRIVATE ${OpenCV_INCLUDE_DIRS} ${dlib_INCLUDE_DIRS})
+
+# 链接库
+target_link_libraries(fatigue_detection
     ${OpenCV_LIBS}
     dlib::dlib
     pthread
