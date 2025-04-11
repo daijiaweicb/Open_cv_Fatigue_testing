@@ -29,7 +29,7 @@ int main() {
     cv::Mat bgrImg, gray;
 
     // 启动 libcamera-vid
-    FILE* pipe = popen("libcamera-vid --mode 3280:2464 --width 3280 --height 2464 --codec yuv420 -o - -t 0", "r");
+    FILE* pipe = popen("libcamera-vid --width 3280 --height 2462 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
     if (!pipe) {
         std::cerr << "无法启动 libcamera-vid" << std::endl;
         return -1;
