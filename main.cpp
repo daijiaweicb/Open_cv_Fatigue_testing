@@ -127,7 +127,7 @@ int main()
     settings.brightness = 0.0;
     settings.contrast = 1.0;
 
-    cam.start(settings);
+    cam.start();
 
     while (cam_running())
     {
