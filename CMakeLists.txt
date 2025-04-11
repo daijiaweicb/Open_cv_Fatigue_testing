@@ -16,7 +16,7 @@ add_executable(fatigue_detection
 )
 
 # 链接库
-target_link_libraries(main
+target_link_libraries(fatigue_detection
     ${OpenCV_LIBS}
     dlib::dlib
     pthread
