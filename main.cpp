@@ -1,6 +1,6 @@
 #include <iostream>
-#include <cstdio>
 #include <vector>
+#include <cstdio>
 #include <opencv2/opencv.hpp>
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
@@ -35,19 +35,19 @@ int main() {
         return -1;
     }
 
-    // 加载模型
+    // 加载 dlib 模型
     dlib::shape_predictor predictor;
     try {
         dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
     } catch (std::exception& e) {
-        std::cerr << "无法加载关键点模型：" << e.what() << std::endl;
+        std::cerr << "无法加载模型：" << e.what() << std::endl;
         return -1;
     }
 
-    // 加载 Haar 人脸检测器
-    cv::CascadeClassifier face_cascade;
-    if (!face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml")) {
-        std::cerr << "无法加载 Haar 模型" << std::endl;
+    // 加载 OpenCV 眼睛检测器
+    cv::CascadeClassifier eyes_cascade;
+    if (!eyes_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_eye_tree_eyeglasses.xml")) {
+        std::cerr << "无法加载眼睛 Haar 模型" << std::endl;
         return -1;
     }
 
@@ -66,15 +66,18 @@ int main() {
         cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);
         cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
 
-        std::vector<cv::Rect> faces;
-        face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
+        std::vector<cv::Rect> eyes;
+        eyes_cascade.detectMultiScale(gray, eyes, 1.1, 3, 0, cv::Size(30, 30));
 
-        for (const auto& face : faces) {
-            cv::rectangle(bgrImg, face, cv::Scalar(255, 0, 0), 2);
-
+        if (eyes.size() >= 2) {
+            // 默认取前两个眼睛框
             dlib::cv_image<dlib::bgr_pixel> cimg(bgrImg);
-            dlib::rectangle dlib_rect(face.x, face.y, face.x + face.width, face.y + face.height);
-            dlib::full_object_detection shape = predictor(cimg, dlib_rect);
+            cv::Rect eye_union = eyes[0] | eyes[1];  // 合并区域
+            dlib::rectangle region(eye_union.x, eye_union.y,
+                                   eye_union.x + eye_union.width,
+                                   eye_union.y + eye_union.height);
+
+            dlib::full_object_detection shape = predictor(cimg, region);
 
             auto left_eye = extract_eye(shape, true);
             auto right_eye = extract_eye(shape, false);
@@ -94,7 +97,7 @@ int main() {
             for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
-        cv::imshow("Fatigue Detection (NO VCam)", bgrImg);
+        cv::imshow("Fatigue Detection (Eyes Only)", bgrImg);
         int key = cv::waitKey(1);
         if (key == 'q' || key == 27) break;
     }
