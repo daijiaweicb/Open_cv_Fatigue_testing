@@ -6,7 +6,7 @@
 using namespace cv;
 using namespace std;
 
-// 眼睛纵横比计算
+
 float eye_aspect_ratio(vector<Point2f>& eye) {
     float A = norm(eye[1] - eye[5]);
     float B = norm(eye[2] - eye[4]);
