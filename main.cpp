@@ -100,8 +100,8 @@ int main() {
     cam.registerCallback(&detector);
 
     Libcam2OpenCVSettings settings;
-    settings.width = 1280;
-    settings.height = 720;
+    settings.width = 640;
+    settings.height = 480;
     settings.framerate = 15;
     settings.brightness = 0.0;
     settings.contrast = 1.0;
