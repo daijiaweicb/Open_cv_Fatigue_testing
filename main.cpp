@@ -11,6 +11,7 @@
 #include <libcamera/libcamera.h>
 #include <sys/mman.h>
 
+// ------------ Libcam2OpenCV 类定义 ----------------
 class Libcam2OpenCV {
 public:
     struct Callback {
@@ -35,8 +36,6 @@ public:
         libcamera::StreamConfiguration &streamConfig = config->at(0);
         streamConfig.size.width = width;
         streamConfig.size.height = height;
-
-        // ✅ 修复 timeout 问题：使用 XRGB8888（树莓派更兼容）
         streamConfig.pixelFormat = libcamera::formats::XRGB8888;
 
         config->validate();
@@ -77,8 +76,11 @@ public:
         }
 
         camera->start(&controls);
+
         for (auto &req : requests)
             camera->queueRequest(req.get());
+
+        std::cout << "Camera started with resolution: " << width << "x" << height << " at " << framerate << " FPS." << std::endl;
     }
 
     void stop() {
@@ -120,25 +122,25 @@ private:
             auto &cfg = config->at(0);
             unsigned int w = cfg.size.width, h = cfg.size.height, stride = cfg.stride;
 
-            // ✅ 注意：XRGB8888 是 4通道图像（8位）
             frame.create(h, w, CV_8UC4);
             uint8_t *ptr = mem[0].data();
             for (unsigned int i = 0; i < h; ++i, ptr += stride)
                 memcpy(frame.ptr(i), ptr, w * 4);
 
-            // ✅ 转换为 BGR 图像，便于处理
             cv::Mat bgr;
             cv::cvtColor(frame, bgr, cv::COLOR_BGRA2BGR);
 
             if (callback) callback->hasFrame(bgr, meta);
         }
 
+        std::cout << "Request completed successfully!" << std::endl;
+
         request->reuse(libcamera::Request::ReuseBuffers);
         camera->queueRequest(request);
     }
 };
 
-// ----------- drowsiness logic callback --------------
+// ------------- 疲劳检测逻辑回调 -------------------
 float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
     float A = cv::norm(eye[1] - eye[5]);
     float B = cv::norm(eye[2] - eye[4]);
@@ -198,7 +200,7 @@ private:
     bool exit_requested = false;
 };
 
-// ----------- main ----------------------------------
+// ------------------- 主程序 -----------------------
 int main() {
     Libcam2OpenCV cam;
     FatigueCallback cb;
