@@ -36,17 +36,21 @@ public:
 
     void hasFrame(const cv::Mat &frame, const libcamera::ControlList &) override
     {
-        if (frame.empty())
+        std::cerr << "[CALLBACK] hasFrame triggered!" << std::endl;
+        std::cerr << "[DEBUG] frame.empty(): " << frame.empty()
+                  << ", size: " << frame.cols << "x" << frame.rows
+                  << ", type: " << frame.type() << std::endl;
+
+        static int saved = 0;
+        if (!saved && !frame.empty())
         {
-            std::cerr << "[ERROR] Empty frame!" << std::endl;
-            return;
+            cv::imwrite("frame_debug.jpg", frame);
+            std::cerr << "[DEBUG] frame saved to frame_debug.jpg" << std::endl;
+            saved = 1;
         }
 
-        if (cv::getWindowProperty("Fatigue Detection", cv::WND_PROP_VISIBLE) < 1)
-        {
-            cam.stop();
+        if (frame.empty())
             return;
-        }
 
         cv::Mat gray;
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
@@ -127,7 +131,7 @@ int main()
     settings.brightness = 0.0;
     settings.contrast = 1.0;
 
-    cam.start();
+    cam.start(settings);
 
     while (cam_running())
     {
