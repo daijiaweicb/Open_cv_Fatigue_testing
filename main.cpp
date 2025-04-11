@@ -21,8 +21,8 @@ std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, b
 }
 
 int main() {
-    const int width = 1280;
-    const int height = 720;
+    const int width = 1920;
+    const int height = 1080;
     const int frame_size = width * height * 3 / 2;  // YUV420
     std::vector<uchar> buffer(frame_size);
     cv::Mat yuvImg(height + height / 2, width, CV_8UC1);
