@@ -9,10 +9,7 @@
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
 #include <libcamera/libcamera.h>
-#include <libcamera/property_ids.h>
-#include <libcamera/control_ids.h>
 #include <sys/mman.h>
-#include <functional>  // 添加这个
 
 class Libcam2OpenCV {
 public:
@@ -38,15 +35,16 @@ public:
         libcamera::StreamConfiguration &streamConfig = config->at(0);
         streamConfig.size.width = width;
         streamConfig.size.height = height;
+
+        // ✅ 修复 timeout 问题：使用 XRGB8888（树莓派更兼容）
         streamConfig.pixelFormat = libcamera::formats::XRGB8888;
+
         config->validate();
         camera->configure(config.get());
 
         allocator = new libcamera::FrameBufferAllocator(camera);
         stream = streamConfig.stream();
         allocator->allocate(stream);
-
-        std::cout << "[INFO] Buffers allocated: " << allocator->buffers(stream).size() << std::endl;
 
         for (auto &buffer : allocator->buffers(stream)) {
             size_t buffer_size = 0;
@@ -65,19 +63,13 @@ public:
             }
         }
 
-        auto &buffers = allocator->buffers(stream);
-        size_t count = std::max(buffers.size(), size_t(4));  // 最少使用 4 个 request 循环
-
-        for (size_t i = 0; i < count; ++i) {
-            auto buffer = buffers[i % buffers.size()];
+        for (auto &buffer : allocator->buffers(stream)) {
             auto request = camera->createRequest();
             request->addBuffer(stream, buffer.get());
             requests.push_back(std::move(request));
         }
 
-        // ✅ 更稳定的信号连接方式（避免某些编译器错误）
-        using namespace std::placeholders;
-        camera->requestCompleted.connect(std::bind(&Libcam2OpenCV::requestComplete, this, _1));
+        camera->requestCompleted.connect(this, &Libcam2OpenCV::requestComplete);
 
         if (framerate > 0) {
             int64_t frame_time = 1000000 / framerate;
@@ -85,7 +77,6 @@ public:
         }
 
         camera->start(&controls);
-
         for (auto &req : requests)
             camera->queueRequest(req.get());
     }
@@ -118,8 +109,6 @@ private:
     }
 
     void requestComplete(libcamera::Request *request) {
-        std::cout << "[DEBUG] Frame received" << std::endl;
-
         if (!request || request->status() == libcamera::Request::RequestCancelled)
             return;
 
@@ -131,11 +120,13 @@ private:
             auto &cfg = config->at(0);
             unsigned int w = cfg.size.width, h = cfg.size.height, stride = cfg.stride;
 
+            // ✅ 注意：XRGB8888 是 4通道图像（8位）
             frame.create(h, w, CV_8UC4);
             uint8_t *ptr = mem[0].data();
             for (unsigned int i = 0; i < h; ++i, ptr += stride)
                 memcpy(frame.ptr(i), ptr, w * 4);
 
+            // ✅ 转换为 BGR 图像，便于处理
             cv::Mat bgr;
             cv::cvtColor(frame, bgr, cv::COLOR_BGRA2BGR);
 
@@ -146,3 +137,77 @@ private:
         camera->queueRequest(request);
     }
 };
+
+// ----------- drowsiness logic callback --------------
+float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
+    float A = cv::norm(eye[1] - eye[5]);
+    float B = cv::norm(eye[2] - eye[4]);
+    float C = cv::norm(eye[0] - eye[3]);
+    return (A + B) / (2.0f * C);
+}
+
+std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, bool left) {
+    std::vector<cv::Point2f> eye;
+    int start = left ? 36 : 42;
+    for (int i = 0; i < 6; ++i)
+        eye.emplace_back(shape.part(start + i).x(), shape.part(start + i).y());
+    return eye;
+}
+
+class FatigueCallback : public Libcam2OpenCV::Callback {
+public:
+    FatigueCallback() {
+        dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
+        face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml");
+    }
+
+    void hasFrame(const cv::Mat &frame, const libcamera::ControlList &) override {
+        cv::Mat gray;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+        std::vector<cv::Rect> faces;
+        face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
+
+        for (const auto &face : faces) {
+            dlib::cv_image<dlib::bgr_pixel> cimg(frame);
+            dlib::rectangle dlib_rect(face.x, face.y, face.x + face.width, face.y + face.height);
+            dlib::full_object_detection shape = predictor(cimg, dlib_rect);
+
+            auto left_eye = extract_eye(shape, true);
+            auto right_eye = extract_eye(shape, false);
+            float ear = (eye_aspect_ratio(left_eye) + eye_aspect_ratio(right_eye)) / 2.0f;
+
+            if (ear < 0.25f) {
+                if (++counter >= 15)
+                    cv::putText(frame, "DROWSINESS ALERT!", {50, 50}, cv::FONT_HERSHEY_SIMPLEX, 1.0, {0, 0, 255}, 2);
+            } else counter = 0;
+
+            for (const auto &pt : left_eye) cv::circle(frame, pt, 2, {0, 255, 0}, -1);
+            for (const auto &pt : right_eye) cv::circle(frame, pt, 2, {0, 255, 0}, -1);
+        }
+
+        cv::imshow("Fatigue Detection", frame);
+        if (cv::waitKey(1) == 'q') exit_requested = true;
+    }
+
+    bool exit() const { return exit_requested; }
+
+private:
+    dlib::shape_predictor predictor;
+    cv::CascadeClassifier face_cascade;
+    int counter = 0;
+    bool exit_requested = false;
+};
+
+// ----------- main ----------------------------------
+int main() {
+    Libcam2OpenCV cam;
+    FatigueCallback cb;
+    cam.registerCallback(&cb);
+    cam.start(640, 480, 15);
+
+    std::cout << "按下 q 键退出..." << std::endl;
+    while (!cb.exit()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    cam.stop();
+    return 0;
+}
