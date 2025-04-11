@@ -1,17 +1,16 @@
 #include <iostream>
-#include <cstdio>
+#include <thread>
 #include <map>
 #include <vector>
-#include <thread>
-#include <chrono>
 #include <memory>
 #include <opencv2/opencv.hpp>
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
 #include <libcamera/libcamera.h>
+#include <libcamera/event_dispatcher.h>
 #include <sys/mman.h>
+#include <functional>
 
-// ------------ Libcam2OpenCV 类定义 ----------------
 class Libcam2OpenCV {
 public:
     struct Callback {
@@ -62,13 +61,16 @@ public:
             }
         }
 
-        for (auto &buffer : allocator->buffers(stream)) {
+        auto &buffers = allocator->buffers(stream);
+        for (size_t i = 0; i < std::max(buffers.size(), size_t(4)); ++i) {
+            auto buffer = buffers[i % buffers.size()];
             auto request = camera->createRequest();
             request->addBuffer(stream, buffer.get());
             requests.push_back(std::move(request));
         }
 
-        camera->requestCompleted.connect(this, &Libcam2OpenCV::requestComplete);
+        using namespace std::placeholders;
+        camera->requestCompleted.connect(std::bind(&Libcam2OpenCV::requestComplete, this, _1));
 
         if (framerate > 0) {
             int64_t frame_time = 1000000 / framerate;
@@ -76,11 +78,8 @@ public:
         }
 
         camera->start(&controls);
-
         for (auto &req : requests)
             camera->queueRequest(req.get());
-
-        std::cout << "Camera started with resolution: " << width << "x" << height << " at " << framerate << " FPS." << std::endl;
     }
 
     void stop() {
@@ -133,14 +132,12 @@ private:
             if (callback) callback->hasFrame(bgr, meta);
         }
 
-        std::cout << "Request completed successfully!" << std::endl;
-
         request->reuse(libcamera::Request::ReuseBuffers);
         camera->queueRequest(request);
     }
 };
 
-// ------------- 疲劳检测逻辑回调 -------------------
+// ---- Drowsiness detection logic ----
 float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
     float A = cv::norm(eye[1] - eye[5]);
     float B = cv::norm(eye[2] - eye[4]);
@@ -200,7 +197,7 @@ private:
     bool exit_requested = false;
 };
 
-// ------------------- 主程序 -----------------------
+// ---- Main loop ----
 int main() {
     Libcam2OpenCV cam;
     FatigueCallback cb;
@@ -208,7 +205,11 @@ int main() {
     cam.start(640, 480, 15);
 
     std::cout << "按下 q 键退出..." << std::endl;
-    while (!cb.exit()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    while (!cb.exit()) {
+        libcamera::EventDispatcher::instance()->processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 
     cam.stop();
     return 0;
