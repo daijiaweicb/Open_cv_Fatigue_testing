@@ -26,9 +26,20 @@ public:
     FatigueDetector() {
         dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
         face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml");
+        cv::namedWindow("Fatigue Detection", cv::WINDOW_AUTOSIZE);
     }
 
     void hasFrame(const cv::Mat &frame, const libcamera::ControlList &) override {
+        if (frame.empty()) {
+            std::cerr << "[ERROR] Empty frame!" << std::endl;
+            return;
+        }
+
+        if (cv::getWindowProperty("Fatigue Detection", cv::WND_PROP_VISIBLE) < 1) {
+            cam.stop();
+            return;
+        }
+
         cv::Mat gray;
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
@@ -60,10 +71,15 @@ public:
             for (const auto& pt : right_eye) cv::circle(frame, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
-        // cv::imshow("Fatigue Detection", frame);
-        // if (cv::waitKey(1) == 'q') {
-        //     cam.stop();
-        // }
+        try {
+            cv::imshow("Fatigue Detection", frame);
+        } catch (const cv::Exception &e) {
+            std::cerr << "[OpenCV Exception] " << e.what() << std::endl;
+        }
+
+        if (cv::waitKey(1) == 'q') {
+            cam.stop();
+        }
     }
 
 private:
