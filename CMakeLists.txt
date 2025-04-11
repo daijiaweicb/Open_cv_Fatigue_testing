@@ -7,21 +7,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 查找 OpenCV
 find_package(OpenCV REQUIRED)
 
-# 查找 dlib（假设你已经安装了）
+# 查找 dlib（确保你已安装 libdlib-dev 或通过源码安装）
 find_package(dlib REQUIRED)
 
-# 添加包含目录
+# 添加头文件目录（可选）
 include_directories(
     ${OpenCV_INCLUDE_DIRS}
     ${dlib_INCLUDE_DIRS}
-    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 # 编译目标
-add_executable(fatigue_detection
-    fatigue_detection.cpp
-    libcam2opencv.cpp
-)
+add_executable(fatigue_detection main.cpp)
 
 # 链接库
 target_link_libraries(fatigue_detection
