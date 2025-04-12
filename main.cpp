@@ -21,21 +21,21 @@ std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, b
 }
 
 int main() {
-    const int width = 640;
-    const int height = 480;
+    const int width = 1280;
+    const int height = 720;
     const int frame_size = width * height * 3 / 2;  // YUV420
     std::vector<uchar> buffer(frame_size);
     cv::Mat yuvImg(height + height / 2, width, CV_8UC1);
     cv::Mat bgrImg, gray;
 
     // 启动 libcamera-vid
-    FILE* pipe = popen("libcamera-vid --width 640 --height 480 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
+    FILE* pipe = popen("libcamera-vid --width 1280 --height 720 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
     if (!pipe) {
         std::cerr << "无法启动 libcamera-vid" << std::endl;
         return -1;
     }
 
-    // 加载模型
+    // 加载 dlib 的人脸关键点模型
     dlib::shape_predictor predictor;
     try {
         dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
@@ -44,7 +44,7 @@ int main() {
         return -1;
     }
 
-    // 加载 Haar 人脸检测器
+    // 加载 OpenCV Haar 检测器
     cv::CascadeClassifier face_cascade;
     if (!face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml")) {
         std::cerr << "无法加载 Haar 模型" << std::endl;
@@ -63,7 +63,7 @@ int main() {
         }
 
         memcpy(yuvImg.data, buffer.data(), frame_size);
-        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);
+        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);  // 注意使用I420
         cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
 
         std::vector<cv::Rect> faces;
@@ -94,7 +94,7 @@ int main() {
             for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
-        cv::imshow("Fatigue Detection (NO VCam)", bgrImg);
+        cv::imshow("Fatigue Detection (1280x720)", bgrImg);
         int key = cv::waitKey(1);
         if (key == 'q' || key == 27) break;
     }
