@@ -70,12 +70,10 @@ int main() {
         face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
 
         for (const auto& face : faces) {
-            // 裁剪图像到人脸区域，放大显示
-            cv::Mat face_roi = bgrImg(face);
-            cv::resize(face_roi, face_roi, cv::Size(width, height)); // 将人脸区域缩放到全屏显示
+            cv::rectangle(bgrImg, face, cv::Scalar(255, 0, 0), 2);
 
-            dlib::cv_image<dlib::bgr_pixel> cimg(face_roi);
-            dlib::rectangle dlib_rect(0, 0, face_roi.cols, face_roi.rows);
+            dlib::cv_image<dlib::bgr_pixel> cimg(bgrImg);
+            dlib::rectangle dlib_rect(face.x, face.y, face.x + face.width, face.y + face.height);
             dlib::full_object_detection shape = predictor(cimg, dlib_rect);
 
             auto left_eye = extract_eye(shape, true);
@@ -85,22 +83,18 @@ int main() {
             if (ear < EAR_THRESHOLD) {
                 counter++;
                 if (counter >= EYES_CLOSED_FRAMES) {
-                    cv::putText(face_roi, "DROWSINESS ALERT!", cv::Point(50, 50),
+                    cv::putText(bgrImg, "DROWSINESS ALERT!", cv::Point(50, 50),
                                 cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
                 }
             } else {
                 counter = 0;
             }
 
-            // 绘制眼睛标记
-            for (const auto& pt : left_eye) cv::circle(face_roi, pt, 2, cv::Scalar(0, 255, 0), -1);
-            for (const auto& pt : right_eye) cv::circle(face_roi, pt, 2, cv::Scalar(0, 255, 0), -1);
-
-            // 在放大后的图像上绘制人脸框
-            cv::rectangle(face_roi, cv::Point(0, 0), cv::Point(face_roi.cols, face_roi.rows), cv::Scalar(255, 0, 0), 2);
-            cv::imshow("Fatigue Detection (Zoomed Face)", face_roi); // 显示裁剪和放大的图像
+            for (const auto& pt : left_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+            for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
+        cv::imshow("Fatigue Detection (1280x720)", bgrImg);
         int key = cv::waitKey(1);
         if (key == 'q' || key == 27) break;
     }
