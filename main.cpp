@@ -1,115 +1,104 @@
+#include <iostream>
+#include <cstdio>
+#include <vector>
 #include <opencv2/opencv.hpp>
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
-#include <dlib/image_processing/frontal_face_detector.h>
-#include <iostream>
-#include <libcamera/libcamera.h>
-#include <libcamera/camera_manager.h>
 
-double compute_ear(const std::vector<dlib::point>& eye) {
-    double A = dlib::length(eye[1] - eye[5]);
-    double B = dlib::length(eye[2] - eye[4]);
-    double C = dlib::length(eye[0] - eye[3]);
-    return (A + B) / (2.0 * C);
+float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
+    float A = cv::norm(eye[1] - eye[5]);
+    float B = cv::norm(eye[2] - eye[4]);
+    float C = cv::norm(eye[0] - eye[3]);
+    return (A + B) / (2.0f * C);
+}
+
+std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, bool left) {
+    std::vector<cv::Point2f> eye;
+    int start = left ? 36 : 42;
+    for (int i = 0; i < 6; ++i)
+        eye.emplace_back(shape.part(start + i).x(), shape.part(start + i).y());
+    return eye;
 }
 
 int main() {
-    // 创建 libcamera 的 CameraManager 和获取摄像头设备
-    libcamera::CameraManager* cm = libcamera::CameraManager::instance();
-    cm->start();
+    const int width = 640;
+    const int height = 480;
+    const int frame_size = width * height * 3 / 2;  // YUV420
+    std::vector<uchar> buffer(frame_size);
+    cv::Mat yuvImg(height + height / 2, width, CV_8UC1);
+    cv::Mat bgrImg, gray;
 
-    // 获取第一个摄像头
-    libcamera::Camera* camera = cm->get(0);
-    if (!camera) {
-        std::cerr << "未找到摄像头！" << std::endl;
+    // 启动 libcamera-vid
+    FILE* pipe = popen("libcamera-vid --width 640 --height 480 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
+    if (!pipe) {
+        std::cerr << "无法启动 libcamera-vid" << std::endl;
         return -1;
     }
 
-    // 配置摄像头
-    camera->acquire();
-    libcamera::StreamConfiguration cfg = camera->generateConfiguration({libcamera::StreamRole::VideoRecording});
-    cfg.size = libcamera::Size(640, 480); // 设置分辨率
-    camera->configure(cfg);
-
-    // 创建 OpenCV 窗口
-    cv::namedWindow("Fatigue Detection", cv::WINDOW_NORMAL);
-
-    // Dlib 人脸检测模型
-    dlib::frontal_face_detector detector = dlib::get_frontal_face_detector();
-    dlib::shape_predictor pose_model;
-    dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> pose_model;
-
-    const double EAR_THRESHOLD = 0.25;
-    const int EAR_CONSEC_FRAMES = 20;
-
-    int frame_counter = 0;
-    bool alarm_on = false;
-
-    // 捕获图像流
-    while (true) {
-        // 请求一个图像帧
-        libcamera::Request* request = camera->createRequest();
-        libcamera::FrameBuffer* buffer = camera->requestBuffer(request);
-
-        if (!request || !buffer) {
-            std::cerr << "无法获取图像帧！" << std::endl;
-            break;
-        }
-
-        // 处理请求并获取帧数据
-        camera->queueRequest(request);
-
-        // 将 libcamera 图像数据转换为 OpenCV Mat 格式
-        cv::Mat frame(cfg.size.height, cfg.size.width, CV_8UC3, buffer->data());
-
-        if (frame.empty()) {
-            std::cerr << "获取图像数据失败！" << std::endl;
-            break;
-        }
-
-        dlib::cv_image<dlib::bgr_pixel> cimg(frame);
-        std::vector<dlib::rectangle> faces = detector(cimg);
-
-        for (auto face : faces) {
-            dlib::full_object_detection shape = pose_model(cimg, face);
-
-            std::vector<dlib::point> left_eye{
-                shape.part(36), shape.part(37), shape.part(38),
-                shape.part(39), shape.part(40), shape.part(41)
-            };
-            std::vector<dlib::point> right_eye{
-                shape.part(42), shape.part(43), shape.part(44),
-                shape.part(45), shape.part(46), shape.part(47)
-            };
-
-            double leftEAR = compute_ear(left_eye);
-            double rightEAR = compute_ear(right_eye);
-            double ear = (leftEAR + rightEAR) / 2.0;
-
-            if (ear < EAR_THRESHOLD) {
-                frame_counter++;
-                if (frame_counter >= EAR_CONSEC_FRAMES) {
-                    if (!alarm_on) {
-                        alarm_on = true;
-                        std::cout << "⚠ 疲劳检测：眨眼时间过长！" << std::endl;
-                    }
-                    cv::putText(frame, "DROWSINESS ALERT!", cv::Point(50, 100),
-                                cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 0, 255), 4);
-                }
-            } else {
-                frame_counter = 0;
-                alarm_on = false;
-            }
-        }
-
-        cv::imshow("Fatigue Detection", frame);
-
-        if (cv::waitKey(1) == 27) break; // 按下 ESC 退出
+    // 加载模型
+    dlib::shape_predictor predictor;
+    try {
+        dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
+    } catch (std::exception& e) {
+        std::cerr << "无法加载关键点模型：" << e.what() << std::endl;
+        return -1;
     }
 
-    // 清理资源
-    camera->release();
-    cm->stop();
+    // 加载 Haar 人脸检测器
+    cv::CascadeClassifier face_cascade;
+    if (!face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml")) {
+        std::cerr << "无法加载 Haar 模型" << std::endl;
+        return -1;
+    }
 
+    const float EAR_THRESHOLD = 0.25f;
+    const int EYES_CLOSED_FRAMES = 15;
+    int counter = 0;
+
+    while (true) {
+        size_t read_bytes = fread(buffer.data(), 1, frame_size, pipe);
+        if (read_bytes != frame_size) {
+            std::cerr << "读取失败或结束" << std::endl;
+            break;
+        }
+
+        memcpy(yuvImg.data, buffer.data(), frame_size);
+        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);
+        cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
+
+        std::vector<cv::Rect> faces;
+        face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
+
+        for (const auto& face : faces) {
+            cv::rectangle(bgrImg, face, cv::Scalar(255, 0, 0), 2);
+
+            dlib::cv_image<dlib::bgr_pixel> cimg(bgrImg);
+            dlib::rectangle dlib_rect(face.x, face.y, face.x + face.width, face.y + face.height);
+            dlib::full_object_detection shape = predictor(cimg, dlib_rect);
+
+            auto left_eye = extract_eye(shape, true);
+            auto right_eye = extract_eye(shape, false);
+            float ear = (eye_aspect_ratio(left_eye) + eye_aspect_ratio(right_eye)) / 2.0f;
+
+            if (ear < EAR_THRESHOLD) {
+                counter++;
+                if (counter >= EYES_CLOSED_FRAMES) {
+                    cv::putText(bgrImg, "DROWSINESS ALERT!", cv::Point(50, 50),
+                                cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
+                }
+            } else {
+                counter = 0;
+            }
+
+            for (const auto& pt : left_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+            for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+        }
+
+        cv::imshow("Fatigue Detection (NO VCam)", bgrImg);
+        int key = cv::waitKey(1);
+        if (key == 'q' || key == 27) break;
+    }
+
+    pclose(pipe);
     return 0;
 }
