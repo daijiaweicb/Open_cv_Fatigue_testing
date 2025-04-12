@@ -18,6 +18,8 @@ find_package(OpenCV REQUIRED)
 
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
+find_package(dlib REQUIRED)
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
