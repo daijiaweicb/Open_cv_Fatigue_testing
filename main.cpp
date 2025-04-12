@@ -3,7 +3,7 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 
-// 实际计算眼睛开合状态的函数
+// 计算眼睛开合状态
 bool is_eye_closed(const cv::Mat& eye_region, float& ratio) {
     // 转换为灰度图（如果不是）
     cv::Mat gray_eye;
@@ -11,6 +11,9 @@ bool is_eye_closed(const cv::Mat& eye_region, float& ratio) {
         cv::cvtColor(eye_region, gray_eye, cv::COLOR_BGR2GRAY);
     else
         gray_eye = eye_region.clone();
+    
+    // 应用高斯模糊减少噪声
+    cv::GaussianBlur(gray_eye, gray_eye, cv::Size(5, 5), 0);
     
     // 二值化以区分眼白和眼球/睫毛
     cv::Mat binary_eye;
@@ -22,54 +25,147 @@ bool is_eye_closed(const cv::Mat& eye_region, float& ratio) {
     ratio = (float)white_pixels / total_pixels;
     
     // 比例超过阈值认为是闭眼
-    return (ratio > 0.30f); // 需要根据实际情况调整阈值
+    return (ratio > 0.25f); // 需要根据实际情况调整阈值
 }
 
-// 计算矩形的纵横比
-float aspect_ratio(const cv::Rect& r) {
-    return (float)r.height / r.width;
+// 检查是否是真实的眼睛而不是鼻孔
+bool is_real_eye(const cv::Mat& roi, const cv::Rect& eye_rect) {
+    // 转换为灰度图
+    cv::Mat gray;
+    if (roi.channels() > 1)
+        cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
+    else
+        gray = roi.clone();
+    
+    // 1. 检查宽高比 - 眼睛通常比鼻孔更宽
+    float aspect = (float)eye_rect.width / eye_rect.height;
+    if (aspect < 1.2f) // 眼睛宽高比通常大于1.2
+        return false;
+    
+    // 2. 分析强度分布 - 眼睛通常有明显的对比度
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(gray, mean, stddev);
+    if (stddev[0] < 35.0) // 对比度过低，可能是鼻孔
+        return false;
+    
+    // 3. 检查水平梯度 - 眼睛有明显的水平边缘
+    cv::Mat sobelX;
+    cv::Sobel(gray, sobelX, CV_16S, 1, 0);
+    cv::convertScaleAbs(sobelX, sobelX);
+    cv::Scalar meanGradient = cv::mean(sobelX);
+    if (meanGradient[0] < 20.0) // 水平梯度值过低
+        return false;
+    
+    // 4. 检查形状特征 - 分析上下区域的明暗差异
+    int h = gray.rows;
+    int w = gray.cols;
+    
+    // 从上到下分三部分检查亮度
+    cv::Mat top = gray(cv::Rect(0, 0, w, h/3));
+    cv::Mat middle = gray(cv::Rect(0, h/3, w, h/3));
+    cv::Mat bottom = gray(cv::Rect(0, 2*h/3, w, h/3));
+    
+    double topMean = cv::mean(top)[0];
+    double middleMean = cv::mean(middle)[0];
+    double bottomMean = cv::mean(bottom)[0];
+    
+    // 眼睛中间部分通常比上下部分暗
+    if (!(middleMean < topMean && middleMean < bottomMean))
+        return false;
+    
+    return true;
 }
 
-// 过滤假眼睛
+// 优化的眼睛过滤函数
 std::vector<cv::Rect> filter_eyes(const std::vector<cv::Rect>& detected_eyes, const cv::Mat& frame) {
     std::vector<cv::Rect> valid_eyes;
+    std::vector<float> confidences;
     
-    // 如果检测到的眼睛太多（可能有假阳性），只保留最可能的两个
-    if (detected_eyes.size() > 2) {
-        // 对检测到的眼睛副本进行排序
-        std::vector<cv::Rect> sorted_eyes = detected_eyes;
+    // 第一步: 基于基本几何特征进行过滤
+    for (const auto& eye : detected_eyes) {
+        float ratio = (float)eye.height / eye.width;
         
-        // 按面积从大到小排序（通常真实眼睛区域会较大）
-        std::sort(sorted_eyes.begin(), sorted_eyes.end(), 
-                 [](const cv::Rect& a, const cv::Rect& b) {
-                     return a.area() > b.area();
+        // 眼睛高宽比应在合理范围内
+        if (ratio > 0.4f && ratio < 0.7f) {
+            // 眼睛大小应适中（太小可能是噪声，太大可能是误检）
+            int area = eye.width * eye.height;
+            if (area > 400 && area < 4000) {
+                // 检查是否是真实的眼睛
+                cv::Rect safe_eye = eye & cv::Rect(0, 0, frame.cols, frame.rows);
+                if (safe_eye.width > 0 && safe_eye.height > 0) {
+                    cv::Mat eye_roi = frame(safe_eye);
+                    if (is_real_eye(eye_roi, safe_eye)) {
+                        valid_eyes.push_back(eye);
+                        
+                        // 计算置信度 (基于大小和形状的加权分数)
+                        float size_score = std::min(1.0f, area / 2000.0f);
+                        float shape_score = 1.0f - std::abs(0.55f - ratio) / 0.55f;
+                        confidences.push_back(0.6f * size_score + 0.4f * shape_score);
+                    }
+                }
+            }
+        }
+    }
+    
+    // 如果没有满足条件的眼睛，返回空结果
+    if (valid_eyes.empty())
+        return valid_eyes;
+    
+    // 第二步: 如果检测到超过2个有效眼睛，按置信度选择最佳两个
+    if (valid_eyes.size() > 2) {
+        // 创建索引数组并按置信度排序
+        std::vector<size_t> indices(valid_eyes.size());
+        std::iota(indices.begin(), indices.end(), 0);
+        std::sort(indices.begin(), indices.end(), 
+                 [&confidences](size_t a, size_t b) {
+                     return confidences[a] > confidences[b];
                  });
         
-        // 优先选择合理纵横比的眼睛
-        std::vector<cv::Rect> ratio_filtered;
-        for (const auto& eye : sorted_eyes) {
-            float ratio = aspect_ratio(eye);
-            // 眼睛通常宽度大于高度，比例在0.3到0.7之间较合理
-            if (ratio > 0.3f && ratio < 0.7f) {
-                ratio_filtered.push_back(eye);
+        // 提取前两个最佳眼睛
+        std::vector<cv::Rect> best_eyes;
+        best_eyes.push_back(valid_eyes[indices[0]]);
+        best_eyes.push_back(valid_eyes[indices[1]]);
+        
+        // 第三步: 检查两眼的水平位置关系
+        if (best_eyes[0].x > best_eyes[1].x)
+            std::swap(best_eyes[0], best_eyes[1]);
+        
+        // 检查眼睛是否在合理的水平位置
+        int dx = best_eyes[1].x - (best_eyes[0].x + best_eyes[0].width);
+        if (dx < 0 || dx > best_eyes[0].width * 2) {
+            // 如果水平距离不合理，可能是检测到了错误的"眼睛"对
+            // 尝试找到下一个最佳候选，如果有的话
+            if (indices.size() > 2) {
+                for (size_t i = 2; i < indices.size(); ++i) {
+                    cv::Rect candidate = valid_eyes[indices[i]];
+                    
+                    // 检查与第一个眼睛的水平距离是否合理
+                    int dx1 = std::abs(candidate.x - best_eyes[0].x);
+                    int dy1 = std::abs(candidate.y - best_eyes[0].y);
+                    
+                    // 检查与第二个眼睛的水平距离是否合理
+                    int dx2 = std::abs(candidate.x - best_eyes[1].x);
+                    int dy2 = std::abs(candidate.y - best_eyes[1].y);
+                    
+                    // 如果与其中一个眼睛形成更好的水平对齐，替换另一个
+                    if (dy1 < best_eyes[0].height && dx1 > best_eyes[0].width * 0.5 && 
+                        dx1 < best_eyes[0].width * 3) {
+                        best_eyes[1] = candidate;
+                        break;
+                    } else if (dy2 < best_eyes[1].height && dx2 > best_eyes[1].width * 0.5 && 
+                               dx2 < best_eyes[1].width * 3) {
+                        best_eyes[0] = candidate;
+                        break;
+                    }
+                }
             }
         }
         
-        // 如果有纵横比合适的，选择它们，否则回退到按大小排序的结果
-        std::vector<cv::Rect>& candidate_eyes = ratio_filtered.empty() ? sorted_eyes : ratio_filtered;
+        // 重新确保左右顺序
+        if (best_eyes[0].x > best_eyes[1].x)
+            std::swap(best_eyes[0], best_eyes[1]);
         
-        // 选择最可能的两个眼睛
-        for (size_t i = 0; i < std::min(size_t(2), candidate_eyes.size()); ++i) {
-            valid_eyes.push_back(candidate_eyes[i]);
-        }
-    } else {
-        // 如果检测到的眼睛数量合理，过滤不合理的纵横比
-        for (const auto& eye : detected_eyes) {
-            float ratio = aspect_ratio(eye);
-            if (ratio > 0.3f && ratio < 0.7f) {
-                valid_eyes.push_back(eye);
-            }
-        }
+        return best_eyes;
     }
     
     return valid_eyes;
@@ -99,7 +195,7 @@ int main() {
         return -1;
     }
     
-    // 可选：也加载人脸检测器来限制眼睛检测区域
+    // 加载人脸检测器
     cv::CascadeClassifier face_cascade;
     bool has_face_detector = face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml");
     
@@ -108,9 +204,9 @@ int main() {
     
     // 检测参数
     float scaleFactor = 1.1;     // 缩放因子
-    int minNeighbors = 4;        // 增加邻居数减少假阳性
-    cv::Size minEyeSize(25, 15); // 最小眼睛尺寸 (宽>高)
-    cv::Size maxEyeSize(80, 45); // 最大眼睛尺寸
+    int minNeighbors = 5;        // 进一步增加邻居数减少假阳性
+    cv::Size minEyeSize(30, 15); // 增大最小眼睛尺寸避开鼻孔
+    cv::Size maxEyeSize(90, 45); // 最大眼睛尺寸
     
     // 用于记录上一帧检测到的有效眼睛
     std::vector<cv::Rect> last_valid_eyes;
@@ -129,20 +225,19 @@ int main() {
         cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);
         cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
         
-        // 增强对比度
+        // 对比度增强
         cv::equalizeHist(gray, gray);
         
         frame_count++;
         
-        // 定义眼睛搜索区域
+        // 默认搜索整个图像
         cv::Rect search_area(0, 0, gray.cols, gray.rows);
         
-        // 如果有人脸检测器并且是每5帧的关键帧，尝试检测人脸
+        // 人脸检测来限制眼睛搜索区域
         std::vector<cv::Rect> faces;
         if (has_face_detector && frame_count % 5 == 0) {
             face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
             
-            // 如果检测到人脸，缩小搜索区域到上半部分
             if (!faces.empty()) {
                 // 使用最大的人脸
                 auto largest_face = *std::max_element(faces.begin(), faces.end(),
@@ -150,7 +245,7 @@ int main() {
                         return a.area() < b.area();
                     });
                 
-                // 只关注人脸上半部分
+                // 眼睛通常在人脸上部，设置搜索区域为人脸上半部
                 search_area = cv::Rect(
                     largest_face.x,
                     largest_face.y,
@@ -158,46 +253,9 @@ int main() {
                     largest_face.height / 2
                 );
                 
-                // 在图像上标记人脸区域
+                // 排除人脸下部以避开鼻孔区域
                 cv::rectangle(bgrImg, largest_face, cv::Scalar(255, 105, 65), 2);
-            }
-        }
-        
-        // 使用上一帧跟踪信息优化搜索区域
-        if (eyes_tracked && frame_count % 3 != 0 && !last_valid_eyes.empty()) {
-            // 计算包含所有眼睛的区域
-            int min_x = width, min_y = height, max_x = 0, max_y = 0;
-            for (const auto& eye : last_valid_eyes) {
-                min_x = std::min(min_x, eye.x);
-                min_y = std::min(min_y, eye.y);
-                max_x = std::max(max_x, eye.x + eye.width);
-                max_y = std::max(max_y, eye.y + eye.height);
-            }
-            
-            // 扩大搜索区域
-            int padding_x = (max_x - min_x);
-            int padding_y = (max_y - min_y);
-            
-            cv::Rect eye_area(
-                std::max(0, min_x - padding_x),
-                std::max(0, min_y - padding_y),
-                std::min(width - (min_x - padding_x), max_x - min_x + 2 * padding_x),
-                std::min(height - (min_y - padding_y), max_y - min_y + 2 * padding_y)
-            );
-            
-            // 如果已经有人脸区域，取交集
-            if (search_area.width < gray.cols || search_area.height < gray.rows) {
-                // 计算交集
-                int x1 = std::max(search_area.x, eye_area.x);
-                int y1 = std::max(search_area.y, eye_area.y);
-                int x2 = std::min(search_area.x + search_area.width, eye_area.x + eye_area.width);
-                int y2 = std::min(search_area.y + search_area.height, eye_area.y + eye_area.height);
-                
-                if (x2 > x1 && y2 > y1) {
-                    search_area = cv::Rect(x1, y1, x2 - x1, y2 - y1);
-                }
-            } else {
-                search_area = eye_area;
+                cv::rectangle(bgrImg, search_area, cv::Scalar(0, 165, 255), 1);
             }
         }
         
@@ -207,7 +265,7 @@ int main() {
         // 获取搜索区域的图像
         cv::Mat roi_img = gray(search_area);
         
-        // 每帧或每隔几帧检测眼睛
+        // 眼睛检测
         std::vector<cv::Rect> detected_eyes;
         if (frame_count % 3 == 0 || !eyes_tracked) {
             eye_cascade.detectMultiScale(roi_img, detected_eyes, scaleFactor, minNeighbors, 0, minEyeSize, maxEyeSize);
@@ -218,7 +276,7 @@ int main() {
                 eye.y += search_area.y;
             }
             
-            // 过滤假眼睛
+            // 过滤假眼睛和鼻孔
             std::vector<cv::Rect> valid_eyes = filter_eyes(detected_eyes, bgrImg);
             
             // 如果检测到有效眼睛，更新跟踪状态
@@ -226,28 +284,16 @@ int main() {
                 last_valid_eyes = valid_eyes;
                 eyes_tracked = true;
             } else if (frame_count % 10 == 0) {
-                // 定期在整个图像中重新检测
-                std::vector<cv::Rect> full_detected_eyes;
-                eye_cascade.detectMultiScale(gray, full_detected_eyes, scaleFactor, minNeighbors, 0, minEyeSize, maxEyeSize);
-                std::vector<cv::Rect> full_valid_eyes = filter_eyes(full_detected_eyes, bgrImg);
-                
-                if (!full_valid_eyes.empty()) {
-                    last_valid_eyes = full_valid_eyes;
-                    eyes_tracked = true;
-                } else {
-                    eyes_tracked = false;
-                }
+                // 定期重新检测
+                eyes_tracked = false;
             }
         }
         
         // 分析眼睛状态
         int closed_eyes_count = 0;
         
-        // 绘制搜索区域
-        cv::rectangle(bgrImg, search_area, cv::Scalar(50, 50, 255), 1);
-        
+        // 绘制检测到的眼睛和状态
         for (const auto& eye : last_valid_eyes) {
-            // 确保眼睛区域在图像内
             cv::Rect safe_eye = eye & cv::Rect(0, 0, bgrImg.cols, bgrImg.rows);
             
             if (safe_eye.width > 0 && safe_eye.height > 0) {
@@ -258,17 +304,16 @@ int main() {
                 float closure_ratio;
                 bool is_closed = is_eye_closed(eye_roi, closure_ratio);
                 
-                // 绘制眼睛检测框
+                // 绘制眼睛检测框和状态
                 cv::Scalar color = is_closed ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
                 cv::rectangle(bgrImg, safe_eye, color, 2);
                 
                 // 显示闭合比例
                 cv::putText(bgrImg, 
-                           "Ratio: " + std::to_string(closure_ratio).substr(0, 5),
+                           std::to_string(closure_ratio).substr(0, 5),
                            cv::Point(safe_eye.x, safe_eye.y - 5),
                            cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1);
                 
-                // 显示状态
                 std::string status = is_closed ? "Closed" : "Open";
                 cv::putText(bgrImg, status,
                            cv::Point(safe_eye.x, safe_eye.y - 20),
@@ -280,7 +325,32 @@ int main() {
             }
         }
         
-        // 疲劳判断：比例超过一半的眼睛是闭合的
+        // 显示所有初步检测到的眼睛候选区域
+        if (frame_count % 3 == 0) {
+            for (const auto& eye : detected_eyes) {
+                // 排除那些已经被确认为真实眼睛的区域
+                bool is_valid = false;
+                for (const auto& valid_eye : last_valid_eyes) {
+                    if (std::abs(eye.x - valid_eye.x) < 5 && std::abs(eye.y - valid_eye.y) < 5) {
+                        is_valid = true;
+                        break;
+                    }
+                }
+                
+                // 用黄色虚线标记被过滤掉的候选区域
+                if (!is_valid) {
+                    cv::Rect safe_eye = eye & cv::Rect(0, 0, bgrImg.cols, bgrImg.rows);
+                    cv::rectangle(bgrImg, safe_eye, cv::Scalar(0, 215, 255), 1);
+                    
+                    // 标记为过滤掉的区域
+                    cv::putText(bgrImg, "Filtered",
+                               cv::Point(safe_eye.x, safe_eye.y - 5),
+                               cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 215, 255), 1);
+                }
+            }
+        }
+        
+        // 疲劳判断
         if (!last_valid_eyes.empty() && 
             closed_eyes_count >= last_valid_eyes.size() / 2) {
             closed_counter++;
@@ -294,15 +364,15 @@ int main() {
                            cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
             }
         } else {
-            closed_counter = std::max(0, closed_counter - 1); // 缓慢减少计数器
+            closed_counter = std::max(0, closed_counter - 1);
         }
         
-        // 显示有效眼睛数量
+        // 显示信息
         cv::putText(bgrImg, "Valid Eyes: " + std::to_string(last_valid_eyes.size()), 
                    cv::Point(width - 170, 30),
                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 0, 0), 2);
         
-        cv::imshow("Eye Fatigue Detection", bgrImg);
+        cv::imshow("Enhanced Eye Detection", bgrImg);
         int key = cv::waitKey(1);
         if (key == 'q' || key == 27) break;
     }
