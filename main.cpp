@@ -1,106 +1,145 @@
-#include <iostream>
-#include <cstdio>
-#include <vector>
+#include <libcamera/libcamera.h>
+#include <libcamera/camera_manager.h>
+#include <libcamera/camera.h>
+#include <libcamera/request.h>
+#include <libcamera/stream.h>
+#include <libcamera/control_ids.h>
+#include <libcamera/framebuffer_allocator.h>
+
 #include <opencv2/opencv.hpp>
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
+#include <dlib/image_processing/frontal_face_detector.h>
 
-float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
-    float A = cv::norm(eye[1] - eye[5]);
-    float B = cv::norm(eye[2] - eye[4]);
-    float C = cv::norm(eye[0] - eye[3]);
-    return (A + B) / (2.0f * C);
-}
+#include <iostream>
+#include <memory>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 
-std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, bool left) {
-    std::vector<cv::Point2f> eye;
-    int start = left ? 36 : 42;
-    for (int i = 0; i < 6; ++i)
-        eye.emplace_back(shape.part(start + i).x(), shape.part(start + i).y());
-    return eye;
+using namespace libcamera;
+using namespace std;
+
+Span<uint8_t> mmapBuffer(FrameBuffer *buffer) {
+    const FrameBuffer::Plane &plane = buffer->planes()[0];
+    void *memory = mmap(nullptr, plane.length, PROT_READ | PROT_WRITE, MAP_SHARED, plane.fd.get(), 0);
+    return Span<uint8_t>(static_cast<uint8_t *>(memory), plane.length);
 }
 
 int main() {
-    const int width = 1280;
-    const int height = 720;
-    const int frame_size = width * height * 3 / 2;  // YUV420
-    std::vector<uchar> buffer(frame_size);
-    cv::Mat yuvImg(height + height / 2, width, CV_8UC1);
-    cv::Mat bgrImg, gray;
+    // 初始化 libcamera
+    std::unique_ptr<CameraManager> cm = std::make_unique<CameraManager>();
+    cm->start();
 
-    // 启动 libcamera-vid
-    FILE* pipe = popen("libcamera-vid --width 1280 --height 720 --framerate 15 "
-    "--codec yuv420 --nopreview --timeout 0 "
-    "--roi 0.15,0.15,0.7,0.7 -o -", "r");
-    if (!pipe) {
-        std::cerr << "无法启动 libcamera-vid" << std::endl;
+    if (cm->cameras().empty()) {
+        cerr << "没有检测到摄像头\n";
         return -1;
     }
 
-    // 加载 dlib 的人脸关键点模型
-    dlib::shape_predictor predictor;
-    try {
-        dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
-    } catch (std::exception& e) {
-        std::cerr << "无法加载关键点模型：" << e.what() << std::endl;
-        return -1;
+    shared_ptr<Camera> camera = cm->get(cm->cameras()[0]->id());
+    camera->acquire();
+
+    std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration({StreamRole::Viewfinder});
+    StreamConfiguration &streamConfig = config->at(0);
+    streamConfig.pixelFormat = formats::BGR888;
+    streamConfig.size.width = 640;
+    streamConfig.size.height = 480;
+    config->validate();
+    camera->configure(config.get());
+
+    Stream *stream = streamConfig.stream();
+    FrameBufferAllocator allocator(camera);
+    allocator.allocate(stream);
+
+    // mmap 映射缓冲
+    std::map<FrameBuffer *, Span<uint8_t>> mmapBuffers;
+    const std::vector<std::unique_ptr<FrameBuffer>> &buffers = allocator.buffers(stream);
+    for (const auto &buffer : buffers) {
+        mmapBuffers[buffer.get()] = mmapBuffer(buffer.get());
     }
 
-    // 加载 OpenCV Haar 检测器
-    cv::CascadeClassifier face_cascade;
-    if (!face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml")) {
-        std::cerr << "无法加载 Haar 模型" << std::endl;
-        return -1;
+    // 准备 dlib 检测器
+    dlib::frontal_face_detector detector = dlib::get_frontal_face_detector();
+    dlib::shape_predictor shape;
+    dlib::deserialize("/path/to/shape_predictor_68_face_landmarks.dat") >> shape; // 你需要修改成正确的路径
+
+    // 设置曝光、帧率等参数（可选）
+    ControlList controls(camera->controls());
+    controls.set(controls::Brightness, 0.5);
+    controls.set(controls::Contrast, 1.0);
+    camera->start(&controls);
+
+    // 预填充 Request 队列
+    std::vector<std::unique_ptr<Request>> requests;
+    for (const auto &buffer : buffers) {
+        std::unique_ptr<Request> request = camera->createRequest();
+        request->addBuffer(stream, buffer.get());
+        requests.push_back(std::move(request));
     }
 
-    const float EAR_THRESHOLD = 0.25f;
-    const int EYES_CLOSED_FRAMES = 15;
-    int counter = 0;
+    for (auto &request : requests)
+        camera->queueRequest(request.get());
 
+    // 主循环
+    int frameCount = 0;
     while (true) {
-        size_t read_bytes = fread(buffer.data(), 1, frame_size, pipe);
-        if (read_bytes != frame_size) {
-            std::cerr << "读取失败或结束" << std::endl;
-            break;
-        }
-
-        memcpy(yuvImg.data, buffer.data(), frame_size);
-        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);  // 注意使用I420
-        cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
-
-        std::vector<cv::Rect> faces;
-        face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
-
-        for (const auto& face : faces) {
-            cv::rectangle(bgrImg, face, cv::Scalar(255, 0, 0), 2);
-
-            dlib::cv_image<dlib::bgr_pixel> cimg(bgrImg);
-            dlib::rectangle dlib_rect(face.x, face.y, face.x + face.width, face.y + face.height);
-            dlib::full_object_detection shape = predictor(cimg, dlib_rect);
-
-            auto left_eye = extract_eye(shape, true);
-            auto right_eye = extract_eye(shape, false);
-            float ear = (eye_aspect_ratio(left_eye) + eye_aspect_ratio(right_eye)) / 2.0f;
-
-            if (ear < EAR_THRESHOLD) {
-                counter++;
-                if (counter >= EYES_CLOSED_FRAMES) {
-                    cv::putText(bgrImg, "DROWSINESS ALERT!", cv::Point(50, 50),
-                                cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
+        // 等待请求完成
+        Request *completed = nullptr;
+        while (!completed) {
+            camera->requestCompleted.connect(
+                [&](Request *req) {
+                    completed = req;
                 }
-            } else {
-                counter = 0;
-            }
-
-            for (const auto& pt : left_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
-            for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
+            );
+            usleep(1000); // 等待 1ms
         }
 
-        cv::imshow("Fatigue Detection (1280x720)", bgrImg);
-        int key = cv::waitKey(1);
-        if (key == 'q' || key == 27) break;
+        if (completed->status() == Request::RequestCancelled)
+            continue;
+
+        FrameBuffer *buffer = completed->buffers().begin()->second;
+        Span<uint8_t> data = mmapBuffers[buffer];
+
+        int width = streamConfig.size.width;
+        int height = streamConfig.size.height;
+        int stride = streamConfig.stride;
+
+        // 复制内存为 OpenCV 图像
+        cv::Mat frame(height, width, CV_8UC3);
+        uint8_t *ptr = data.data();
+        for (int i = 0; i < height; ++i, ptr += stride) {
+            memcpy(frame.ptr(i), ptr, width * 3);
+        }
+
+        // dlib 图像转换
+        dlib::cv_image<dlib::bgr_pixel> dlibImg(frame);
+        std::vector<dlib::rectangle> faces = detector(dlibImg);
+
+        for (auto &face : faces) {
+            dlib::full_object_detection landmarks = shape(dlibImg, face);
+            for (int i = 36; i <= 41; ++i) {
+                cv::circle(frame, cv::Point(landmarks.part(i).x(), landmarks.part(i).y()), 2, cv::Scalar(0, 255, 0), -1);
+            }
+            for (int i = 42; i <= 47; ++i) {
+                cv::circle(frame, cv::Point(landmarks.part(i).x(), landmarks.part(i).y()), 2, cv::Scalar(255, 0, 0), -1);
+            }
+        }
+
+        cv::imshow("Fatigue Detection", frame);
+        if (cv::waitKey(1) == 27) break; // 按 Esc 退出
+
+        // 重新入队
+        completed->reuse(Request::ReuseBuffers);
+        camera->queueRequest(completed);
+
+        frameCount++;
     }
 
-    pclose(pipe);
+    // 清理
+    camera->stop();
+    allocator.free(stream);
+    camera->release();
+    cm->stop();
+
     return 0;
 }

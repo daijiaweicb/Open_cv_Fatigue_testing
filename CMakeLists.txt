@@ -11,6 +11,9 @@ find_package(OpenCV REQUIRED)
 # 查找 dlib
 find_package(dlib REQUIRED)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBCAMERA REQUIRED libcamera)
+
 # 添加源文件
 add_executable(FatigueNoVCam main.cpp)
 
@@ -19,4 +22,5 @@ target_link_libraries(FatigueNoVCam
     ${OpenCV_LIBS}
     dlib::dlib
     pthread
+    ${LIBCAMERA_LIBRARIES}  # 添加 libcamera 库
 )
