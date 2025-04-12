@@ -14,6 +14,11 @@ Window::Window() {
     label_ear = new QLabel("EAR: ");
     label_alarm = new QLabel("状态: 正常");
 
+    // 推荐设置标签样式方便测试
+    label_fps->setStyleSheet("font-size: 16px;");
+    label_ear->setStyleSheet("font-size: 16px;");
+    label_alarm->setStyleSheet("font-size: 16px; color: red;");
+
     QVBoxLayout *vInfo = new QVBoxLayout;
     vInfo->addWidget(thermo);
     vInfo->addWidget(label_fps);
@@ -21,12 +26,15 @@ Window::Window() {
     vInfo->addWidget(label_alarm);
 
     hLayout = new QHBoxLayout;
-    hLayout->addLayout(vInfo);
-    hLayout->addWidget(image);
+    hLayout->addLayout(vInfo, 1);  // 显式权重
+    hLayout->addWidget(image, 3);
+
     setLayout(hLayout);
+    this->resize(1000, 600);  // 强制窗口足够大
 
     camera.start();
 }
+
 
 Window::~Window() {
     camera.stop();
