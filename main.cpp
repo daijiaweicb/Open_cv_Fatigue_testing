@@ -15,7 +15,7 @@ double compute_ear(const std::vector<point>& eye) {
 }
 
 int main() {
-    cv::VideoCapture cap(0); // 从树莓派摄像头读取
+    cv::VideoCapture cap("/dev/video0", cv::CAP_V4L2); // 从树莓派摄像头读取
     if (!cap.isOpened()) {
         cerr << "摄像头打开失败！" << endl;
         return -1;
