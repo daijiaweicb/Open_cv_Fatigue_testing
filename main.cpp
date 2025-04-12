@@ -5,6 +5,7 @@
 #include <dlib/opencv.h>
 #include <dlib/image_processing.h>
 
+// 计算眼睛纵横比 EAR
 float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
     float A = cv::norm(eye[1] - eye[5]);
     float B = cv::norm(eye[2] - eye[4]);
@@ -12,6 +13,7 @@ float eye_aspect_ratio(const std::vector<cv::Point2f>& eye) {
     return (A + B) / (2.0f * C);
 }
 
+// 提取左右眼的关键点
 std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, bool left) {
     std::vector<cv::Point2f> eye;
     int start = left ? 36 : 42;
@@ -21,36 +23,37 @@ std::vector<cv::Point2f> extract_eye(const dlib::full_object_detection& shape, b
 }
 
 int main() {
-    const int width = 1280;
-    const int height = 720;
-    const int frame_size = width * height * 3 / 2;  // YUV420
+    const int width = 1920;
+    const int height = 1080;
+    const int frame_size = width * height * 3 / 2;  // YUV420 格式
     std::vector<uchar> buffer(frame_size);
     cv::Mat yuvImg(height + height / 2, width, CV_8UC1);
     cv::Mat bgrImg, gray;
 
-    // 启动 libcamera-vid
-    FILE* pipe = popen("libcamera-vid --width 1280 --height 720 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
+    // 启动 libcamera-vid（高清）
+    FILE* pipe = popen("libcamera-vid --width 1920 --height 1080 --framerate 15 --codec yuv420 --nopreview --timeout 0 -o -", "r");
     if (!pipe) {
         std::cerr << "无法启动 libcamera-vid" << std::endl;
         return -1;
     }
 
-    // 加载 dlib 的人脸关键点模型
+    // 加载人脸关键点模型
     dlib::shape_predictor predictor;
     try {
         dlib::deserialize("shape_predictor_68_face_landmarks.dat") >> predictor;
     } catch (std::exception& e) {
-        std::cerr << "无法加载关键点模型：" << e.what() << std::endl;
+        std::cerr << "无法加载 shape_predictor 模型：" << e.what() << std::endl;
         return -1;
     }
 
-    // 加载 OpenCV Haar 检测器
+    // 加载 Haar 级联人脸检测器
     cv::CascadeClassifier face_cascade;
     if (!face_cascade.load("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml")) {
         std::cerr << "无法加载 Haar 模型" << std::endl;
         return -1;
     }
 
+    // 疲劳检测参数
     const float EAR_THRESHOLD = 0.25f;
     const int EYES_CLOSED_FRAMES = 15;
     int counter = 0;
@@ -62,10 +65,12 @@ int main() {
             break;
         }
 
+        // 解码 YUV → BGR
         memcpy(yuvImg.data, buffer.data(), frame_size);
-        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);  // 注意使用I420
+        cv::cvtColor(yuvImg, bgrImg, cv::COLOR_YUV2BGR_I420);
         cv::cvtColor(bgrImg, gray, cv::COLOR_BGR2GRAY);
 
+        // 检测人脸
         std::vector<cv::Rect> faces;
         face_cascade.detectMultiScale(gray, faces, 1.1, 3, 0, cv::Size(80, 80));
 
@@ -94,7 +99,7 @@ int main() {
             for (const auto& pt : right_eye) cv::circle(bgrImg, pt, 2, cv::Scalar(0, 255, 0), -1);
         }
 
-        cv::imshow("Fatigue Detection (1280x720)", bgrImg);
+        cv::imshow("Fatigue Detection - 1080p", bgrImg);
         int key = cv::waitKey(1);
         if (key == 'q' || key == 27) break;
     }
